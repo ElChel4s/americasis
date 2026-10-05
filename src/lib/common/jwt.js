@@ -2,7 +2,7 @@ import { SignJWT, jwtVerify } from 'jose';
 import { env } from '../config/env';
 
 const getSecretKey = () => {
-  const secret = env.JWT_SECRET || 'super-secret-key-for-dev-only-change-me';
+  const secret = env.JWT_SECRET || 'super_secret_jwt_key_america_erp_2026_dev';
   return new TextEncoder().encode(secret);
 };
 
@@ -38,11 +38,13 @@ export async function verifyAuthToken(token) {
 
 /**
  * Opciones seguras para la cookie de autenticación httpOnly
+ * Soporta tanto dominios HTTP como HTTPS en producción sin ser rechazada por el navegador
  */
 export function getAuthCookieOptions(maxAgeSeconds = 60 * 60 * 24 * 7) {
+  const isSecure = process.env.COOKIE_SECURE === 'true';
   return {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: isSecure,
     sameSite: 'lax',
     path: '/',
     maxAge: maxAgeSeconds,

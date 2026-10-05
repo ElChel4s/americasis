@@ -3,38 +3,31 @@ import { cookies } from 'next/headers';
 import { jwtVerify } from 'jose';
 
 export default async function RootPage() {
-  const enableAuth = process.env.ENABLE_AUTH === 'true';
-
-  if (!enableAuth) {
-    redirect('/admin/inicio');
-  }
-
   const cookieStore = await cookies();
   const token = cookieStore.get('auth_token')?.value;
 
+  // Si no hay token, la vista por defecto obligatoria es el login
   if (!token) {
     redirect('/login');
   }
 
-  let targetPath = '/admin/inicio';
+  const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_america_erp_2026_dev';
+  const secretKey = new TextEncoder().encode(JWT_SECRET);
+
   try {
-    const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-for-dev-only-change-me';
-    const secretKey = new TextEncoder().encode(JWT_SECRET);
     const { payload } = await jwtVerify(token, secretKey);
     const rol = payload?.rol;
 
     if (rol === 'ADMINISTRADOR') {
-      targetPath = '/admin/inicio';
+      redirect('/admin/inicio');
     } else if (rol === 'RECEPCION') {
-      targetPath = '/recepcion/inicio';
+      redirect('/recepcion/inicio');
     } else if (rol === 'TECNICO') {
-      targetPath = '/tecnico/inicio';
+      redirect('/tecnico/inicio');
     } else {
-      targetPath = '/login';
+      redirect('/login');
     }
   } catch {
-    targetPath = '/login';
+    redirect('/login');
   }
-
-  redirect(targetPath);
 }

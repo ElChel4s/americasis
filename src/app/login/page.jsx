@@ -57,10 +57,18 @@ function LoginForm() {
 
       setSuccessMessage('¡Autenticación exitosa! Ingresando al sistema...');
       
-      // Breve pausa para feedback visual
+      const userRole = data?.data?.user?.rol;
+      let targetPath = fromPath && fromPath !== '/' && fromPath !== '/login' ? fromPath : null;
+      if (!targetPath) {
+        if (userRole === 'ADMINISTRADOR') targetPath = '/admin/inicio';
+        else if (userRole === 'RECEPCION') targetPath = '/recepcion/inicio';
+        else if (userRole === 'TECNICO') targetPath = '/tecnico/inicio';
+        else targetPath = '/admin/inicio';
+      }
+
+      // Navegación completa para que el navegador adjunte la cookie de sesión de inmediato
       setTimeout(() => {
-        router.push(fromPath);
-        router.refresh();
+        window.location.href = targetPath;
       }, 500);
     } catch (err) {
       setErrorMessage(err.message || 'Error al conectar con el servidor');

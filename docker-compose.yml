@@ -14,6 +14,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3010
+      - ENABLE_AUTH=true
       - DATABASE_URL=${DATABASE_URL}
       - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-https://puzktxdrfeungpmzsjhd.supabase.co}
       - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-sb_publishable_cl9TF_2lnbhJeIcLRvGUfQ_VVAotgMl}

@@ -43,7 +43,7 @@ export default function RoleHeader({ navItems = [], roleTitle = 'Sistema ERP' })
 
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
-    router.push('/login');
+    window.location.href = '/login';
   };
 
   const handlePasswordChanged = () => {
