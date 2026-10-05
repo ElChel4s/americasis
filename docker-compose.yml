@@ -5,14 +5,19 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-https://puzktxdrfeungpmzsjhd.supabase.co}
+        - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-sb_publishable_cl9TF_2lnbhJeIcLRvGUfQ_VVAotgMl}
     container_name: americasis-erp
     ports:
-      - "3000:3000"
+      - "3010:3010"
     environment:
-      # These variables will be picked up by Next.js at runtime
       - NODE_ENV=production
+      - PORT=3010
       - DATABASE_URL=${DATABASE_URL}
-      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
-      - NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY}
-      - JWT_SECRET=${JWT_SECRET}
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-https://puzktxdrfeungpmzsjhd.supabase.co}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-sb_publishable_cl9TF_2lnbhJeIcLRvGUfQ_VVAotgMl}
+      - SUPABASE_URL=${SUPABASE_URL:-https://puzktxdrfeungpmzsjhd.supabase.co}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-sb_publishable_cl9TF_2lnbhJeIcLRvGUfQ_VVAotgMl}
+      - JWT_SECRET=${JWT_SECRET:-super_secret_jwt_key_america_erp_2026_dev}
     restart: always
