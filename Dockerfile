@@ -8,7 +8,8 @@ WORKDIR /app
 
 # Install dependencies based on the preferred package manager
 COPY package.json package-lock.json* ./
-RUN npm ci
+# Ensure dev dependencies are installed even if Portainer sets NODE_ENV=production globally
+RUN npm ci --include=dev
 
 # Rebuild the source code only when needed
 FROM base AS builder
@@ -18,6 +19,8 @@ COPY . .
 
 # Next.js telemetry is disabled
 ENV NEXT_TELEMETRY_DISABLED=1
+# Increase memory limit to avoid OOM in low-RAM VPS
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 
 RUN npm run build
 
