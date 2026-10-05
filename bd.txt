@@ -1,0 +1,996 @@
+-- ============================================================================
+-- SISTEMA AMÉRICA — RADIO SERVICE ERP
+-- SCRIPT MAESTRO DEFINITIVO PARA SUPABASE / POSTGRESQL 14+
+-- ============================================================================
+-- CARACTERÍSTICAS DEL SCRIPT:
+-- 1. LIMPIEZA PREVIA AUTOMÁTICA (DROP CASCADE):
+--    Elimina cualquier versión anterior de tablas, vistas o tipos desactualizados
+--    (soluciona errores como: column "categoria" does not exist o tipos duplicados).
+-- 2. EXTENSIONES: pgcrypto y uuid-ossp.
+-- 3. DOMINIOS Y ENUMS: 3 Roles oficiales (RECEPCION, TECNICO, ADMINISTRADOR) y
+--    el ciclo de vida estricto de 5 fases (RECIBIDO, EN_DIAGNOSTICO, DIAGNOSTICADO, COTIZADO, ENTREGADO).
+-- 4. BUCKET DE SUPABASE STORAGE:
+--    Crea automáticamente el bucket público 'evidencias-radios' con sus políticas RLS
+--    para subida y visualización de fotos WebP en mostrador y mesa técnica.
+-- 5. CABECERA Y DETALLE MULTI-HANDY (1 a 10 equipos por orden).
+-- 6. VISTAS SQL DE ALTO RENDIMIENTO para Recepción, Mesa Técnica y Administrador.
+-- 7. TRIGGERS AUTOMÁTICOS para cálculo de subtotales, correlativo OS y timestamps.
+-- 8. SEMILLAS (SEED DATA): Accesorios estándar, catálogo de fallas RF y usuarios demo.
+-- ============================================================================
+
+-- ============================================================================
+-- 0. LIMPIEZA PREVIA SEGURA (DROP EN CASCADA DE OBJETOS PREVIOS)
+-- ============================================================================
+
+-- A. Eliminar vistas existentes
+DROP VIEW IF EXISTS vista_recepcion_dashboard CASCADE;
+DROP VIEW IF EXISTS vista_tecnico_cola_mesa CASCADE;
+DROP VIEW IF EXISTS vista_admin_ordenes_consolidada CASCADE;
+DROP VIEW IF EXISTS vista_busqueda_omnibar_equipos CASCADE;
+DROP VIEW IF EXISTS vista_informe_tecnico_a4 CASCADE;
+
+-- B. Eliminar tablas existentes en orden de dependencia
+DROP TABLE IF EXISTS auditoria_logs CASCADE;
+DROP TABLE IF EXISTS equipo_evidencias CASCADE;
+DROP TABLE IF EXISTS equipo_repuestos_cotizados CASCADE;
+DROP TABLE IF EXISTS equipo_fallas CASCADE;
+DROP TABLE IF EXISTS equipo_accesorios_recepcion CASCADE;
+DROP TABLE IF EXISTS orden_equipos CASCADE;
+DROP TABLE IF EXISTS ordenes_servicio CASCADE;
+DROP TABLE IF EXISTS catalogo_fallas_placa CASCADE;
+DROP TABLE IF EXISTS catalogo_accesorios_recepcion CASCADE;
+DROP TABLE IF EXISTS equipos_maestro CASCADE;
+DROP TABLE IF EXISTS clientes CASCADE;
+DROP TABLE IF EXISTS usuarios CASCADE;
+DROP TABLE IF EXISTS sucursales CASCADE;
+
+-- C. Eliminar funciones y triggers existentes
+DROP FUNCTION IF EXISTS fn_recalcular_subtotales_orden() CASCADE;
+DROP FUNCTION IF EXISTS fn_generar_numero_orden() CASCADE;
+DROP FUNCTION IF EXISTS trigger_set_timestamp() CASCADE;
+
+-- D. Eliminar tipos enumerados existentes para recrearlos sin conflictos
+DROP TYPE IF EXISTS tipo_garantia_enum CASCADE;
+DROP TYPE IF EXISTS condicion_repuesto_enum CASCADE;
+DROP TYPE IF EXISTS presencia_accesorio_enum CASCADE;
+DROP TYPE IF EXISTS banda_frecuencia_enum CASCADE;
+DROP TYPE IF EXISTS moneda_enum CASCADE;
+DROP TYPE IF EXISTS estado_equipo_enum CASCADE;
+DROP TYPE IF EXISTS estado_orden_enum CASCADE;
+DROP TYPE IF EXISTS rol_usuario_enum CASCADE;
+
+-- ============================================================================
+-- 1. EXTENSIONES REQUERIDAS
+-- ============================================================================
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- ============================================================================
+-- 2. TIPOS ENUMERADOS (DOMINIOS DE NEGOCIO Y CICLO DE VIDA)
+-- ============================================================================
+
+-- Roles oficiales del sistema (Estrictamente los 3 perfiles reales del taller)
+CREATE TYPE rol_usuario_enum AS ENUM (
+    'RECEPCION',      -- Atención al cliente, mostrador, cotizaciones y entrega
+    'TECNICO',        -- Mesa de trabajo, diagnóstico de placa y fotos internas
+    'ADMINISTRADOR'   -- Acceso total, flujos, personal y configuración
+);
+
+-- Ciclo de vida estricto de una orden de servicio
+CREATE TYPE estado_orden_enum AS ENUM (
+    'RECIBIDO',           -- 1. Registrada por recepción con datos de cliente, handies y fotos externas
+    'EN_DIAGNOSTICO',     -- 2. El técnico la abrió en su mesa de trabajo y guarda avances
+    'DIAGNOSTICADO',      -- 3. El técnico concluyó fallas, fotos de placa y redacción; espera presupuesto
+    'COTIZADO',           -- 4. Recepción fijó mano de obra, repuestos y generó informe A4 / Word
+    'ENTREGADO',          -- 5. El cliente pagó y retiró los equipos del mostrador
+    -- Estados operativos complementarios:
+    'BORRADOR',
+    'APROBADO',
+    'RECHAZADO',
+    'EN_REPARACION',
+    'PARCIALMENTE_LISTO',
+    'LISTO_PARA_ENTREGA',
+    'ANULADO'
+);
+
+-- Estado técnico individual por equipo / handy
+CREATE TYPE estado_equipo_enum AS ENUM (
+    'RECIBIDO',
+    'EN_DIAGNOSTICO',
+    'DIAGNOSTICADO',
+    'ESPERANDO_REPUESTO',
+    'REPARADO',
+    'RECHAZADO',
+    'ENTREGADO'
+);
+
+-- Moneda oficial de liquidación
+CREATE TYPE moneda_enum AS ENUM ('BOB', 'USD');
+
+-- Bandas de telecomunicaciones RF
+CREATE TYPE banda_frecuencia_enum AS ENUM ('VHF', 'UHF', 'HF', 'DUAL_BAND', 'OTRA');
+
+-- Checklist de presencia en mostrador
+CREATE TYPE presencia_accesorio_enum AS ENUM ('CON', 'SIN');
+
+-- Condición física del accesorio o pieza
+CREATE TYPE condicion_repuesto_enum AS ENUM (
+    'Operativa',
+    'Degradado / Baja Capacidad',
+    'Dañado/Roto',
+    'Se sugiere reemplazo'
+);
+
+-- Tipos de garantía técnica para informes
+CREATE TYPE tipo_garantia_enum AS ENUM (
+    'ESTANDAR_5_DIAS',
+    'DIAS_30',
+    'SIN_GARANTIA',
+    'PERSONALIZADA'
+);
+
+-- ============================================================================
+-- 3. FUNCIÓN TRIGGER UNIVERSAL PARA TIMESTAMP DE ACTUALIZACIÓN
+-- ============================================================================
+CREATE OR REPLACE FUNCTION trigger_set_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.actualizado_en = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================================================================
+-- 4. SUCURSALES (SOPORTE MULTI-TALLER O SUCURSAL CENTRAL)
+-- ============================================================================
+CREATE TABLE sucursales (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    nombre VARCHAR(100) NOT NULL DEFAULT 'Sucursal Central - La Paz',
+    ciudad VARCHAR(60) NOT NULL DEFAULT 'La Paz',
+    direccion TEXT DEFAULT 'Av. 16 de Julio, Edif. América',
+    telefono VARCHAR(50) DEFAULT '+591 2 2441122',
+    activo BOOLEAN NOT NULL DEFAULT true,
+    creado_en TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    actualizado_en TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TRIGGER trg_sucursales_timestamp
+BEFORE UPDATE ON sucursales
+FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
+
+-- ============================================================================
+-- 5. SEGURIDAD, USUARIOS Y AUTENTICACIÓN (RBAC)
+-- ============================================================================
+CREATE TABLE usuarios (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sucursal_id UUID REFERENCES sucursales(id) ON DELETE SET NULL,
+    nombre_completo VARCHAR(150) NOT NULL,
+    email VARCHAR(150) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    rol rol_usuario_enum NOT NULL DEFAULT 'TECNICO',
+    cargo_titulo VARCHAR(100) DEFAULT 'Especialista en Radiocomunicación',
+    firma_digital_url TEXT,
+    activo BOOLEAN NOT NULL DEFAULT true,
+    token_version INT NOT NULL DEFAULT 1,
+    ultimo_login TIMESTAMPTZ,
+    creado_en TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    actualizado_en TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_usuarios_email_lower ON usuarios (LOWER(TRIM(email)));
+CREATE INDEX idx_usuarios_rol ON usuarios (rol);
+CREATE INDEX idx_usuarios_activo ON usuarios (activo);
+
+CREATE TRIGGER trg_usuarios_timestamp
+BEFORE UPDATE ON usuarios
+FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
+
+-- ============================================================================
+-- 6. CLIENTES Y MAESTRO DE NÚMEROS DE SERIE (HISTORIAL DEL RADIO)
+-- ============================================================================
+CREATE TABLE clientes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    razon_social VARCHAR(150) NOT NULL,
+    nit_ci VARCHAR(40),
+    telefono VARCHAR(50),
+    email VARCHAR(100),
+    persona_contacto VARCHAR(120),
+    direccion TEXT,
+    ciudad VARCHAR(60) DEFAULT 'La Paz',
+    notas_cliente TEXT,
+    creado_en TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    actualizado_en TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_clientes_razon_social ON clientes (LOWER(TRIM(razon_social)));
+CREATE INDEX idx_clientes_nit_ci ON clientes (nit_ci);
+
+CREATE TRIGGER trg_clientes_timestamp
+BEFORE UPDATE ON clientes
+FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
+
+-- Maestro único por Número de Serie para trazabilidad de reparaciones previas
+CREATE TABLE equipos_maestro (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    numero_serie VARCHAR(100) NOT NULL,
+    marca VARCHAR(60) NOT NULL DEFAULT 'Motorola',
+    modelo VARCHAR(80) NOT NULL,
+    banda_defecto banda_frecuencia_enum DEFAULT 'VHF',
+    cliente_propietario_id UUID REFERENCES clientes(id) ON DELETE SET NULL,
+    creado_en TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    actualizado_en TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX uq_idx_equipos_maestro_serie 
+ON equipos_maestro (UPPER(TRIM(numero_serie)));
+
+CREATE TRIGGER trg_equipos_maestro_timestamp
+BEFORE UPDATE ON equipos_maestro
+FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
+
+-- ============================================================================
+-- 7. CATÁLOGOS DINÁMICOS RF (ACCESORIOS Y FALLAS DE PLACA CON CATEGORÍA)
+-- ============================================================================
+
+-- Catálogo de accesorios para recepción y evaluación
+CREATE TABLE catalogo_accesorios_recepcion (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    nombre VARCHAR(80) UNIQUE NOT NULL,
+    repuesto_sugerido_defecto VARCHAR(120),
+    es_sistema BOOLEAN NOT NULL DEFAULT false,
+    orden_visual INT DEFAULT 0,
+    activo BOOLEAN NOT NULL DEFAULT true,
+    creado_en TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Catálogo de fallas de placa de circuito con categorías
+CREATE TABLE catalogo_fallas_placa (
+    codigo VARCHAR(60) PRIMARY KEY,
+    categoria VARCHAR(30) NOT NULL DEFAULT 'TX', -- TX, RX, AUDIO, ALIMENTACION, LOGICA, CHASIS
+    label VARCHAR(120) NOT NULL,
+    descripcion TEXT,
+    es_sistema BOOLEAN NOT NULL DEFAULT false,
+    activo BOOLEAN NOT NULL DEFAULT true,
+    creado_en TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_cat_fallas_categoria ON catalogo_fallas_placa (categoria);
+
+-- ============================================================================
+-- 8. CABECERA PRINCIPAL: ÓRDENES DE SERVICIO (PRESUPUESTO Y TÉRMINOS)
+-- ============================================================================
+CREATE TABLE ordenes_servicio (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sucursal_id UUID REFERENCES sucursales(id) ON DELETE SET NULL,
+    secuencia_num BIGSERIAL,
+    numero_orden VARCHAR(30) UNIQUE NOT NULL, -- Ej: OS-80412
+    cliente_id UUID NOT NULL REFERENCES clientes(id) ON DELETE RESTRICT,
+    
+    -- Operadores involucrados
+    usuario_recepcion_id UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+    usuario_tecnico_id UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+    recepcionista_nombre_manual VARCHAR(120) DEFAULT 'Recepción Mostrador',
+    tecnico_nombre_manual VARCHAR(120),
+    
+    -- Estado global según ciclo de 5 fases
+    estado estado_orden_enum NOT NULL DEFAULT 'RECIBIDO',
+    moneda moneda_enum NOT NULL DEFAULT 'BOB',
+    tasa_cambio NUMERIC(8, 4) NOT NULL DEFAULT 6.9600,
+    
+    -- Subtotales oficiales (Fase 3 y 4)
+    monto_subtotal_servicio NUMERIC(12, 2) NOT NULL DEFAULT 0.00,   -- Subtotal 1: Mano de obra / calibración
+    monto_subtotal_accesorios NUMERIC(12, 2) NOT NULL DEFAULT 0.00, -- Subtotal 2: Accesorios y piezas con reemplazo
+    sumatoria_total NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    total_literal TEXT,                                             -- "SON: DOS MIL QUINIENTOS VEINTE 00/100 BOLIVIANOS"
+    
+    -- Condiciones y Parámetros Comerciales (Presupuesto e Informe A4 / Word)
+    dias_vigencia INT NOT NULL DEFAULT 5,
+    tiempo_entrega VARCHAR(100) NOT NULL DEFAULT '1 a 2 semanas',
+    costo_revision NUMERIC(10, 2) NOT NULL DEFAULT 210.00,          -- Bs. 210,00.- / Usd. 15,00.-
+    tipo_garantia VARCHAR(50) NOT NULL DEFAULT 'ESTANDAR_5_DIAS',
+    texto_garantia TEXT DEFAULT '5 días calendario a partir de la entrega para verificación operativa de los trabajos realizados.',
+    incluir_conclusiones BOOLEAN NOT NULL DEFAULT false,
+    conclusiones JSONB DEFAULT '[]'::jsonb,
+    incluir_garantia_baterias BOOLEAN NOT NULL DEFAULT true,
+    referencia_adicional TEXT,
+    condiciones_comerciales_json JSONB DEFAULT '{}'::jsonb,
+    
+    -- Trazabilidad de tiempos
+    fecha_ingreso TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    fecha_compromiso DATE,
+    fecha_diagnostico TIMESTAMPTZ,
+    fecha_cotizacion TIMESTAMPTZ,
+    fecha_entrega TIMESTAMPTZ,
+    
+    notas_internas TEXT,
+    creado_en TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    actualizado_en TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_ordenes_numero ON ordenes_servicio (numero_orden);
+CREATE INDEX idx_ordenes_cliente ON ordenes_servicio (cliente_id);
+CREATE INDEX idx_ordenes_estado ON ordenes_servicio (estado);
+CREATE INDEX idx_ordenes_fecha ON ordenes_servicio (fecha_ingreso DESC);
+
+CREATE TRIGGER trg_ordenes_timestamp
+BEFORE UPDATE ON ordenes_servicio
+FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
+
+-- ============================================================================
+-- 9. EQUIPOS / RADIOS POR ORDEN (MULTI-EQUIPO: FLOTAS DE 1 A 10 RADIOS)
+-- ============================================================================
+CREATE TABLE orden_equipos (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    orden_id UUID NOT NULL REFERENCES ordenes_servicio(id) ON DELETE CASCADE,
+    equipo_maestro_id UUID REFERENCES equipos_maestro(id) ON DELETE SET NULL,
+    orden_indice INT NOT NULL DEFAULT 1, -- Handy 1, Handy 2...
+    
+    marca VARCHAR(60) NOT NULL DEFAULT 'Motorola',
+    modelo VARCHAR(80) NOT NULL,
+    numero_serie VARCHAR(80) NOT NULL,
+    banda banda_frecuencia_enum NOT NULL DEFAULT 'VHF',
+    
+    -- Estado individual y viabilidad técnica
+    estado_individual estado_equipo_enum NOT NULL DEFAULT 'RECIBIDO',
+    reparacion_rechazada BOOLEAN NOT NULL DEFAULT false,
+    motivo_rechazo TEXT,
+    no_autorizo_revision BOOLEAN NOT NULL DEFAULT false, -- Cuando no autorizó reparación y solo se cobra revisión
+    
+    -- Diagnóstico técnico de laboratorio (Fase 2)
+    falla_declarada_cliente TEXT DEFAULT 'Revisión y mantenimiento general',
+    texto_diagnostico TEXT,                             -- Dictado por voz o redacción oficial
+    notas_adicionales TEXT,
+    
+    -- Procedimiento y Mano de Obra (fijado por Recepción en Fase 3)
+    descripcion_servicio TEXT DEFAULT '(Servicio técnico, revisión general, limpieza, ajuste-calibración de parámetros y mantenimiento general)',
+    costo_servicio NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    
+    -- Trazabilidad y entrega
+    tecnico_asignado_id UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+    tecnico_nombre_manual VARCHAR(120),
+    es_garantia BOOLEAN NOT NULL DEFAULT false,
+    orden_origen_garantia_id UUID REFERENCES ordenes_servicio(id) ON DELETE SET NULL,
+    fecha_entrega TIMESTAMPTZ,
+    
+    creado_en TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    actualizado_en TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    
+    CONSTRAINT uq_orden_equipo_indice UNIQUE (orden_id, orden_indice)
+);
+
+CREATE INDEX idx_equipos_serie_upper ON orden_equipos (UPPER(TRIM(numero_serie)));
+CREATE INDEX idx_equipos_orden ON orden_equipos (orden_id);
+CREATE INDEX idx_equipos_estado ON orden_equipos (estado_individual);
+
+CREATE TRIGGER trg_orden_equipos_timestamp
+BEFORE UPDATE ON orden_equipos
+FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
+
+-- ============================================================================
+-- 10. CHECKLIST DE ACCESORIOS DE RECEPCIÓN (FASE 1)
+-- ============================================================================
+CREATE TABLE equipo_accesorios_recepcion (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    equipo_id UUID NOT NULL REFERENCES orden_equipos(id) ON DELETE CASCADE,
+    accesorio_catalogo_id UUID REFERENCES catalogo_accesorios_recepcion(id) ON DELETE SET NULL,
+    accesorio_nombre VARCHAR(80) NOT NULL,
+    presencia presencia_accesorio_enum NOT NULL DEFAULT 'SIN',
+    
+    -- Detalles específicos de Antena
+    antena_estado VARCHAR(30), -- 'OPERATIVA' | 'REEMPLAZO'
+    antena_modelo_sugerido VARCHAR(100),
+    
+    -- Detalles específicos de Batería
+    bateria_modelo VARCHAR(80),
+    bateria_serie VARCHAR(80),
+    bateria_porcentaje_carga INT CHECK (bateria_porcentaje_carga >= 0 AND bateria_porcentaje_carga <= 100),
+    
+    otros_descripcion VARCHAR(200),
+    
+    CONSTRAINT uq_equipo_accesorio UNIQUE (equipo_id, accesorio_nombre)
+);
+
+CREATE INDEX idx_eq_acc_equipo ON equipo_accesorios_recepcion (equipo_id);
+
+-- ============================================================================
+-- 11. DETECCIÓN DE FALLAS DE PLACA DE CIRCUITO (FASE 2)
+-- ============================================================================
+CREATE TABLE equipo_fallas (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    equipo_id UUID NOT NULL REFERENCES orden_equipos(id) ON DELETE CASCADE,
+    codigo VARCHAR(80) NOT NULL,
+    label VARCHAR(120) NOT NULL,
+    categoria VARCHAR(30) DEFAULT 'TX',
+    descripcion TEXT,
+    es_custom BOOLEAN NOT NULL DEFAULT false,
+    reparado BOOLEAN NOT NULL DEFAULT true,
+    
+    CONSTRAINT uq_equipo_falla UNIQUE (equipo_id, codigo)
+);
+
+CREATE INDEX idx_eq_fallas_equipo ON equipo_fallas (equipo_id);
+
+-- ============================================================================
+-- 12. EVALUACIÓN Y COTIZACIÓN DE ACCESORIOS Y REPUESTOS (FASE 2 Y 3)
+-- ============================================================================
+CREATE TABLE equipo_repuestos_cotizados (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    equipo_id UUID NOT NULL REFERENCES orden_equipos(id) ON DELETE CASCADE,
+    nombre VARCHAR(120) NOT NULL,
+    estado_condicion condicion_repuesto_enum DEFAULT 'Operativa',
+    
+    -- Control de reemplazo y retención de carga
+    se_reemplaza BOOLEAN NOT NULL DEFAULT false,
+    porcentaje_carga INT CHECK (porcentaje_carga >= 0 AND porcentaje_carga <= 100),
+    
+    falla_detalle TEXT,
+    repuesto_sugerido VARCHAR(150),
+    cantidad INT NOT NULL DEFAULT 1,
+    precio NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    subtotal NUMERIC(10, 2) GENERATED ALWAYS AS (cantidad * precio) STORED,
+    
+    es_opcional BOOLEAN NOT NULL DEFAULT false,
+    aprobado_cliente BOOLEAN NOT NULL DEFAULT true,
+    es_manual BOOLEAN NOT NULL DEFAULT false,
+    recibido_mostrador BOOLEAN NOT NULL DEFAULT false,
+    orden_visual INT DEFAULT 0
+);
+
+CREATE INDEX idx_eq_repuestos_equipo ON equipo_repuestos_cotizados (equipo_id);
+CREATE INDEX idx_eq_repuestos_reemplazo ON equipo_repuestos_cotizados (se_reemplaza);
+
+-- ============================================================================
+-- 13. EVIDENCIAS FOTOGRÁFICAS EN FORMATO WEBP (STORAGE Y TIEMPO REAL)
+-- ============================================================================
+CREATE TABLE equipo_evidencias (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    equipo_id UUID NOT NULL REFERENCES orden_equipos(id) ON DELETE CASCADE,
+    orden_id UUID REFERENCES ordenes_servicio(id) ON DELETE CASCADE,
+    storage_driver VARCHAR(30) NOT NULL DEFAULT 'SUPABASE', -- 'SUPABASE', 'LOCAL', 'S3'
+    nombre_archivo VARCHAR(255) NOT NULL,
+    url_archivo TEXT NOT NULL,
+    etapa VARCHAR(30) DEFAULT 'RECEPCION', -- 'RECEPCION' (mostrador) | 'DIAGNOSTICO' (placa) | 'ENTREGA'
+    es_webp BOOLEAN NOT NULL DEFAULT true,
+    tamano_bytes BIGINT,
+    mime_type VARCHAR(50) DEFAULT 'image/webp',
+    subido_por_usuario_id UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+    fecha_subida TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_evidencias_equipo ON equipo_evidencias (equipo_id);
+CREATE INDEX idx_evidencias_orden ON equipo_evidencias (orden_id);
+CREATE INDEX idx_evidencias_etapa ON equipo_evidencias (etapa);
+
+-- ============================================================================
+-- 14. REGISTRO DE AUDITORÍA Y TRAZABILIDAD (LOGS)
+-- ============================================================================
+CREATE TABLE auditoria_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    orden_id UUID REFERENCES ordenes_servicio(id) ON DELETE CASCADE,
+    equipo_id UUID REFERENCES orden_equipos(id) ON DELETE SET NULL,
+    
+    usuario_id UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+    usuario_nombre VARCHAR(120) NOT NULL DEFAULT 'Operador del Sistema',
+    usuario_rol VARCHAR(40),
+    
+    accion VARCHAR(60) NOT NULL, 
+    -- 'REGISTRO_INGRESO', 'ABRIR_MESA', 'GUARDAR_AVANCE', 'FINALIZAR_DIAGNOSTICO', 'FIJAR_PRESUPUESTO', 'ENTREGA_ORDEN'
+    
+    estado_anterior VARCHAR(40),
+    estado_nuevo VARCHAR(40),
+    detalle_cambio TEXT,
+    ip_origen VARCHAR(45),
+    fecha_evento TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_auditoria_orden ON auditoria_logs (orden_id, fecha_evento DESC);
+CREATE INDEX idx_auditoria_usuario ON auditoria_logs (usuario_id);
+
+-- ============================================================================
+-- 15. BUCKET DE SUPABASE STORAGE Y POLÍTICAS DE ACCESO
+-- ============================================================================
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'storage') THEN
+        -- 1. Crear o actualizar el bucket público 'evidencias-radios'
+        INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+        VALUES (
+            'evidencias-radios', 
+            'evidencias-radios', 
+            true, 
+            10485760, -- 10 MB límite
+            ARRAY['image/webp', 'image/jpeg', 'image/png', 'image/jpg']
+        )
+        ON CONFLICT (id) DO UPDATE SET 
+            public = true,
+            file_size_limit = 10485760,
+            allowed_mime_types = ARRAY['image/webp', 'image/jpeg', 'image/png', 'image/jpg'];
+
+        -- 2. Políticas de acceso para subida y lectura de imágenes
+        DROP POLICY IF EXISTS "Acceso publico lectura evidencias-radios" ON storage.objects;
+        CREATE POLICY "Acceso publico lectura evidencias-radios"
+        ON storage.objects FOR SELECT
+        USING (bucket_id = 'evidencias-radios');
+
+        DROP POLICY IF EXISTS "Subida libre evidencias-radios" ON storage.objects;
+        CREATE POLICY "Subida libre evidencias-radios"
+        ON storage.objects FOR INSERT
+        WITH CHECK (bucket_id = 'evidencias-radios');
+
+        DROP POLICY IF EXISTS "Modificacion libre evidencias-radios" ON storage.objects;
+        CREATE POLICY "Modificacion libre evidencias-radios"
+        ON storage.objects FOR UPDATE
+        USING (bucket_id = 'evidencias-radios');
+
+        DROP POLICY IF EXISTS "Eliminacion libre evidencias-radios" ON storage.objects;
+        CREATE POLICY "Eliminacion libre evidencias-radios"
+        ON storage.objects FOR DELETE
+        USING (bucket_id = 'evidencias-radios');
+    END IF;
+EXCEPTION WHEN OTHERS THEN null; END $$;
+
+-- ============================================================================
+-- 16. VISTAS SQL DE ALTO RENDIMIENTO POR ROL Y PANTALLA
+-- ============================================================================
+
+-- A. Vista para Recepción (/recepcion/inicio): Agrupada por las 3 columnas operativas
+CREATE OR REPLACE VIEW vista_recepcion_dashboard AS
+SELECT 
+    o.id,
+    o.numero_orden,
+    c.razon_social AS cliente_nombre,
+    c.telefono AS cliente_telefono,
+    o.estado,
+    o.moneda,
+    o.sumatoria_total,
+    o.monto_subtotal_servicio,
+    o.monto_subtotal_accesorios,
+    o.fecha_ingreso,
+    (SELECT COUNT(*) FROM orden_equipos e WHERE e.orden_id = o.id) AS total_equipos,
+    ROUND(EXTRACT(EPOCH FROM (NOW() - o.fecha_ingreso)) / 3600, 1) AS horas_en_taller,
+    CASE 
+        WHEN o.estado IN ('RECIBIDO', 'EN_DIAGNOSTICO') THEN 'EN_TALLER'
+        WHEN o.estado = 'DIAGNOSTICADO' THEN 'POR_COTIZAR'
+        WHEN o.estado = 'COTIZADO' THEN 'LISTAS_ENTREGA'
+        ELSE 'HISTORICO'
+    END AS columna_tab,
+    CASE 
+        WHEN o.estado IN ('RECIBIDO', 'EN_DIAGNOSTICO') THEN 'Ver Avance'
+        WHEN o.estado = 'DIAGNOSTICADO' THEN 'Fijar Costos y Generar Informe'
+        WHEN o.estado = 'COTIZADO' THEN 'Ver Documentos / Entregar'
+        ELSE 'Ver Detalle'
+    END AS accion_boton
+FROM ordenes_servicio o
+JOIN clientes c ON o.cliente_id = c.id
+WHERE o.estado NOT IN ('ANULADO')
+ORDER BY o.fecha_ingreso DESC;
+
+-- B. Vista para Técnico (/tecnico/inicio): Cola de trabajo en banco
+CREATE OR REPLACE VIEW vista_tecnico_cola_mesa AS
+SELECT 
+    o.id,
+    o.numero_orden,
+    c.razon_social AS cliente_nombre,
+    o.estado,
+    o.fecha_ingreso,
+    (SELECT COUNT(*) FROM orden_equipos e WHERE e.orden_id = o.id) AS total_equipos,
+    ROUND(EXTRACT(EPOCH FROM (NOW() - o.fecha_ingreso)) / 60, 0) AS minutos_espera,
+    (
+        SELECT STRING_AGG(DISTINCT CONCAT(eq.marca, ' ', eq.modelo), ', ') 
+        FROM orden_equipos eq 
+        WHERE eq.orden_id = o.id
+    ) AS modelos_resumen,
+    '/tecnico/diagnostico/' || o.id AS ruta_diagnostico
+FROM ordenes_servicio o
+JOIN clientes c ON o.cliente_id = c.id
+WHERE o.estado IN ('RECIBIDO', 'EN_DIAGNOSTICO')
+ORDER BY o.fecha_ingreso ASC;
+
+-- C. Vista para Administrador (/admin/flujos y /admin/inicio): Control general total
+CREATE OR REPLACE VIEW vista_admin_ordenes_consolidada AS
+SELECT 
+    o.id,
+    o.numero_orden,
+    c.razon_social AS cliente_nombre,
+    c.nit_ci AS cliente_nit,
+    o.estado,
+    o.moneda,
+    o.monto_subtotal_servicio,
+    o.monto_subtotal_accesorios,
+    o.sumatoria_total,
+    o.total_literal,
+    (SELECT COUNT(*) FROM orden_equipos e WHERE e.orden_id = o.id) AS total_equipos,
+    COALESCE(u_tec.nombre_completo, o.tecnico_nombre_manual, 'Sin Asignar') AS tecnico_asignado,
+    COALESCE(u_rec.nombre_completo, o.recepcionista_nombre_manual, 'Recepción') AS recepcionista,
+    o.fecha_ingreso,
+    o.fecha_diagnostico,
+    o.fecha_cotizacion,
+    o.fecha_entrega,
+    '/tecnico/diagnostico/' || o.id AS url_mesa_tecnica,
+    '/recepcion/orden/' || o.id || '/presupuesto' AS url_presupuesto_doc
+FROM ordenes_servicio o
+JOIN clientes c ON o.cliente_id = c.id
+LEFT JOIN usuarios u_tec ON o.usuario_tecnico_id = u_tec.id
+LEFT JOIN usuarios u_rec ON o.usuario_recepcion_id = u_rec.id
+ORDER BY o.fecha_ingreso DESC;
+
+-- D. Vista Omnibar Global (Buscador rápido por serie, cliente o modelo)
+CREATE OR REPLACE VIEW vista_busqueda_omnibar_equipos AS
+SELECT 
+    eq.numero_serie,
+    eq.marca,
+    eq.modelo,
+    eq.banda,
+    eq.estado_individual,
+    o.id AS orden_id,
+    o.numero_orden,
+    o.estado AS orden_estado,
+    o.moneda,
+    c.razon_social AS cliente_nombre,
+    c.nit_ci AS cliente_nit,
+    o.fecha_ingreso
+FROM orden_equipos eq
+JOIN ordenes_servicio o ON eq.orden_id = o.id
+JOIN clientes c ON o.cliente_id = c.id
+ORDER BY o.fecha_ingreso DESC;
+
+-- ============================================================================
+-- 17. PROCEDIMIENTOS Y TRIGGERS AUTOMÁTICOS
+-- ============================================================================
+
+-- A. Generador automático de correlativo de orden (ej. OS-80413)
+CREATE OR REPLACE FUNCTION fn_generar_numero_orden()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.numero_orden IS NULL OR TRIM(NEW.numero_orden) = '' THEN
+        NEW.numero_orden := 'OS-' || LPAD(NEW.secuencia_num::TEXT, 5, '0');
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_generar_numero_orden
+BEFORE INSERT ON ordenes_servicio
+FOR EACH ROW EXECUTE FUNCTION fn_generar_numero_orden();
+
+-- B. Recalcular automáticamente Subtotales 1, 2 y Total en ordenes_servicio
+CREATE OR REPLACE FUNCTION fn_recalcular_subtotales_orden()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_orden_id UUID;
+    v_subtotal1 NUMERIC(12, 2) := 0.00;
+    v_subtotal2 NUMERIC(12, 2) := 0.00;
+    v_total NUMERIC(12, 2) := 0.00;
+BEGIN
+    IF TG_TABLE_NAME = 'orden_equipos' THEN
+        v_orden_id := COALESCE(NEW.orden_id, OLD.orden_id);
+    ELSIF TG_TABLE_NAME = 'equipo_repuestos_cotizados' THEN
+        SELECT orden_id INTO v_orden_id FROM orden_equipos WHERE id = COALESCE(NEW.equipo_id, OLD.equipo_id);
+    END IF;
+
+    IF v_orden_id IS NOT NULL THEN
+        -- Subtotal 1: Servicio técnico / mano de obra (excluyendo equipos rechazados sin revisión)
+        SELECT COALESCE(SUM(costo_servicio), 0.00) INTO v_subtotal1
+        FROM orden_equipos
+        WHERE orden_id = v_orden_id 
+          AND (reparacion_rechazada IS FALSE OR no_autorizo_revision IS TRUE);
+
+        -- Subtotal 2: Accesorios y repuestos marcados con reemplazo
+        SELECT COALESCE(SUM(r.cantidad * r.precio), 0.00) INTO v_subtotal2
+        FROM equipo_repuestos_cotizados r
+        JOIN orden_equipos e ON r.equipo_id = e.id
+        WHERE e.orden_id = v_orden_id 
+          AND (e.reparacion_rechazada IS FALSE)
+          AND r.se_reemplaza = true;
+
+        v_total := v_subtotal1 + v_subtotal2;
+
+        UPDATE ordenes_servicio
+        SET monto_subtotal_servicio = v_subtotal1,
+            monto_subtotal_accesorios = v_subtotal2,
+            sumatoria_total = v_total,
+            actualizado_en = CURRENT_TIMESTAMP
+        WHERE id = v_orden_id;
+    END IF;
+
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger sobre orden_equipos
+CREATE TRIGGER trg_recalc_subtotales_equipos
+AFTER INSERT OR UPDATE OF costo_servicio, reparacion_rechazada, no_autorizo_revision OR DELETE ON orden_equipos
+FOR EACH ROW EXECUTE FUNCTION fn_recalcular_subtotales_orden();
+
+-- Trigger sobre equipo_repuestos_cotizados
+CREATE TRIGGER trg_recalc_subtotales_repuestos
+AFTER INSERT OR UPDATE OF cantidad, precio, se_reemplaza OR DELETE ON equipo_repuestos_cotizados
+FOR EACH ROW EXECUTE FUNCTION fn_recalcular_subtotales_orden();
+
+-- ============================================================================
+-- 18. POLÍTICAS DE SEGURIDAD (ROW LEVEL SECURITY - RLS) EN SUPABASE
+-- ============================================================================
+ALTER TABLE usuarios ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ordenes_servicio ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orden_equipos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE equipo_accesorios_recepcion ENABLE ROW LEVEL SECURITY;
+ALTER TABLE equipo_fallas ENABLE ROW LEVEL SECURITY;
+ALTER TABLE equipo_repuestos_cotizados ENABLE ROW LEVEL SECURITY;
+ALTER TABLE equipo_evidencias ENABLE ROW LEVEL SECURITY;
+ALTER TABLE auditoria_logs ENABLE ROW LEVEL SECURITY;
+
+-- Políticas de lectura abierta para usuarios autenticados / mostrador
+CREATE POLICY "Lectura general ordenes" ON ordenes_servicio FOR SELECT USING (true);
+CREATE POLICY "Lectura general equipos" ON orden_equipos FOR SELECT USING (true);
+CREATE POLICY "Lectura general accesorios" ON equipo_accesorios_recepcion FOR SELECT USING (true);
+CREATE POLICY "Lectura general fallas" ON equipo_fallas FOR SELECT USING (true);
+CREATE POLICY "Lectura general repuestos" ON equipo_repuestos_cotizados FOR SELECT USING (true);
+CREATE POLICY "Lectura general evidencias" ON equipo_evidencias FOR SELECT USING (true);
+
+-- Control de modificación total para operaciones
+CREATE POLICY "Control total ordenes" ON ordenes_servicio FOR ALL USING (true);
+CREATE POLICY "Control total equipos" ON orden_equipos FOR ALL USING (true);
+CREATE POLICY "Control total repuestos" ON equipo_repuestos_cotizados FOR ALL USING (true);
+CREATE POLICY "Control total evidencias" ON equipo_evidencias FOR ALL USING (true);
+
+-- ============================================================================
+-- 19. HABILITAR PUBLICACIÓN EN TIEMPO REAL (SUPABASE REALTIME)
+-- ============================================================================
+DO $$ BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE ordenes_servicio;
+EXCEPTION WHEN OTHERS THEN null; END $$;
+
+DO $$ BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE orden_equipos;
+EXCEPTION WHEN OTHERS THEN null; END $$;
+
+DO $$ BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE equipo_evidencias;
+EXCEPTION WHEN OTHERS THEN null; END $$;
+
+-- ============================================================================
+-- 20. SEMILLAS DE DATOS INICIALES (SEED DATA LISTO PARA OPERAR)
+-- ============================================================================
+
+-- 1. Sucursal Central
+INSERT INTO sucursales (id, nombre, ciudad, direccion, telefono)
+VALUES (
+    'a0000000-0000-0000-0000-000000000001',
+    'Sucursal Central - La Paz',
+    'La Paz',
+    'Av. 16 de Julio #1490, El Prado',
+    '+591 2 2441122'
+) ON CONFLICT (id) DO NOTHING;
+
+-- 2. Personal Inicial Oficial (3 Roles estrictos - Contraseña: America2026!)
+-- Hash bcrypt 10 rounds: $2b$10$0VYKfuMtSx.k6FGWQ.5mEu61FLzQCktOax6RQfXxdUcKfHeLB7h66
+INSERT INTO usuarios (id, sucursal_id, nombre_completo, email, password_hash, rol, cargo_titulo, activo)
+VALUES 
+    (
+        'b0000000-0000-0000-0000-000000000001',
+        'a0000000-0000-0000-0000-000000000001',
+        'Administrador General',
+        'admin@americasis.bo',
+        '$2b$10$0VYKfuMtSx.k6FGWQ.5mEu61FLzQCktOax6RQfXxdUcKfHeLB7h66',
+        'ADMINISTRADOR',
+        'Gerencia de Operaciones',
+        true
+    ),
+    (
+        'b0000000-0000-0000-0000-000000000002',
+        'a0000000-0000-0000-0000-000000000001',
+        'Roberto Gómez',
+        'tecnico@americasis.bo',
+        '$2b$10$0VYKfuMtSx.k6FGWQ.5mEu61FLzQCktOax6RQfXxdUcKfHeLB7h66',
+        'TECNICO',
+        'Técnico Especialista en Radiofrecuencia',
+        true
+    ),
+    (
+        'b0000000-0000-0000-0000-000000000003',
+        'a0000000-0000-0000-0000-000000000001',
+        'Ana Morales',
+        'recepcion@americasis.bo',
+        '$2b$10$0VYKfuMtSx.k6FGWQ.5mEu61FLzQCktOax6RQfXxdUcKfHeLB7h66',
+        'RECEPCION',
+        'Atención y Mostrador Comercial',
+        true
+    )
+ON CONFLICT (email) DO NOTHING;
+
+-- 3. Catálogo Oficial de los 10 Accesorios Estándar
+INSERT INTO catalogo_accesorios_recepcion (nombre, repuesto_sugerido_defecto, es_sistema, orden_visual)
+VALUES 
+    ('Antena', 'Antena Heliflex Original VHF/UHF', true, 1),
+    ('Batería', 'Batería Li-ion PMNN4077 / NNTN4497', true, 2),
+    ('Cargador completo', 'Cargador de Escritorio Rápido Completo', true, 3),
+    ('Clip de cinturón', 'Clip de Cinturón Original Motorola', true, 4),
+    ('Micrófono externo', 'Micrófono de Solapa Remoto PMMN4013', true, 5),
+    ('Adaptador', 'Adaptador / Transformador 220V', true, 6),
+    ('Base de cargador', 'Cuna de Carga Rápida', true, 7),
+    ('Micrófono de radio', 'Micrófono de Mano Estándar', true, 8),
+    ('Cable de alimentación', 'Cable de Poder DC con Fusible', true, 9),
+    ('Fuente de poder', 'Fuente de Poder Regulada 13.8V', true, 10),
+    ('Otros', 'Accesorio Especial Adicional', true, 99)
+ON CONFLICT (nombre) DO NOTHING;
+
+-- 4. Catálogo de las 22 Fallas Técnicas de Placa RF (Categorizadas con columna "categoria")
+INSERT INTO catalogo_fallas_placa (codigo, categoria, label, descripcion, es_sistema)
+VALUES 
+    -- Transmisión (TX)
+    ('ETAPA_TX', 'TX', 'Etapa TX Inoperativa', 'Circuito transmisor sin emisión de portadora RF', true),
+    ('MODULO_POTENCIA', 'TX', 'Módulo P.A. Degradado', 'Potencia baja (<1.5 Watts) o transistores finales dañados', true),
+    ('FRECUENCIA_DESPLAZADA', 'TX', 'Frecuencia Desplazada', 'Oscilador descalibrado, error de frecuencia > 500 Hz', true),
+    ('DISTORSION_TX', 'TX', 'Modulación TX Distorsionada', 'Audio recortado o sobremodulación por desviador defectuoso', true),
+    ('PTT_SWITCH', 'TX', 'Pulsador PTT Roto', 'Microswitch lateral no conmuta a transmisión', true),
+
+    -- Recepción (RX)
+    ('ETAPA_RX', 'RX', 'Etapa RX Sorda / Débil', 'Sensibilidad degradada, no recibe señales lejanas', true),
+    ('SQUELCH_ABIERTO', 'RX', 'Squelch Abierto Permanente', 'Ruido blanco constante sin silenciamiento', true),
+    ('DIODO_RX', 'RX', 'Diodo PIN RX en Corto', 'Diodo de conmutación quemado por exceso de RF', true),
+    ('FILTRO_FI', 'RX', 'Filtro FI Descalibrado', 'Filtro cerámico de 455 kHz cristalizado con pérdida', true),
+
+    -- Audio y Microfonía
+    ('CHIP_AUDIO', 'AUDIO', 'Amplificador Audio Mudo', 'Sin salida al altavoz, chip BTL o capacitor en corto', true),
+    ('PARLANTE_ROTO', 'AUDIO', 'Cono de Parlante Roto', 'Membrana perforada o bobina abierta / raspando', true),
+    ('MIC_INTERNO', 'AUDIO', 'Micrófono Electret Inoperativo', 'Cápsula de micrófono interno muda o con falso contacto', true),
+    ('POTENCIOMETRO_VOL', 'AUDIO', 'Potenciómetro Volumen Falso', 'Pistas resistivas desgastadas o eje quebrado', true),
+    ('SELECTOR_CANALES', 'AUDIO', 'Selector Canales Desgastado', 'Encoder rotativo salta canales o gira libre', true),
+
+    -- Alimentación y Batería
+    ('NO_ENCIENDE', 'ALIMENTACION', 'Equipo No Enciende', 'Consumo cero o cortocircuito directo en fuente DC', true),
+    ('BORNES_BATERIA', 'ALIMENTACION', 'Terminales Batería Sulfatados', 'Contactos dorados deformados o con corrosión', true),
+    ('SE_APAGA_PTT', 'ALIMENTACION', 'Se Apaga al Transmitir', 'Caída brusca de voltaje por alta resistencia interna', true),
+
+    -- Lógica y Pantalla
+    ('PANTALLA_LCD', 'LOGICA', 'Display LCD Roto', 'Segmentos faltantes o cristal líquido derramado', true),
+    ('FIRMWARE_CODEPLUG', 'LOGICA', 'Corrupción de Codeplug', 'Error de memoria EEPROM o microcontrolador bloqueado', true),
+
+    -- Chasis y Conectores
+    ('ENTRADA_HUMEDAD', 'CHASIS', 'Ingreso Humedad / Sulfato', 'Placa con óxido de cobre y residuos minerales', true),
+    ('CONECTOR_SMA', 'CHASIS', 'Conector Antena Quebrado', 'Pin central SMA o rosca arrancada de la placa', true),
+    ('CARCASA_FRACTURADA', 'CHASIS', 'Carcasa Frontal Rajada', 'Sellos de protección IP54/IP67 comprometidos', true)
+ON CONFLICT (codigo) DO NOTHING;
+
+-- 5. Clientes Reales de Telecomunicaciones
+INSERT INTO clientes (id, razon_social, nit_ci, telefono, email, persona_contacto, direccion, ciudad)
+VALUES 
+    (
+        'c0000000-0000-0000-0000-000000000001',
+        'MINERA SAN CRISTOBAL S.A.',
+        '1020304050',
+        '+591 2 2114455',
+        'logistica@sancristobal.com',
+        'Ing. Carlos Mendoza (Jefe Telecomunicaciones)',
+        'Campamento Toldos, Potosí',
+        'Potosí'
+    ),
+    (
+        'c0000000-0000-0000-0000-000000000002',
+        'CONSTRUCTORA KEMLO & ASOCIADOS',
+        '987654321',
+        '+591 76543210',
+        'obras@kemlo-asociados.bo',
+        'Arq. Gonzalo Kemlo',
+        'Av. Arce, Edif. Illimani #402',
+        'La Paz'
+    ),
+    (
+        'c0000000-0000-0000-0000-000000000003',
+        'SEGURIDAD PRIVADA ATLAS S.R.L.',
+        '1033445566',
+        '+591 3 3322110',
+        'operaciones@atlas-seguridad.com',
+        'Cap. Fernando Suárez',
+        'Calle 21 de Calacoto #820',
+        'La Paz'
+    )
+ON CONFLICT (id) DO NOTHING;
+
+-- 6. Órdenes Iniciales Demostrativas (Para probar los 3 inicios por rol)
+-- Orden 1: En Fase 3 (DIAGNOSTICADO) -> Lista para que Mostrador cotice
+INSERT INTO ordenes_servicio (
+    id, sucursal_id, numero_orden, cliente_id, usuario_recepcion_id, usuario_tecnico_id,
+    recepcionista_nombre_manual, tecnico_nombre_manual, estado, moneda, tasa_cambio,
+    monto_subtotal_servicio, monto_subtotal_accesorios, sumatoria_total, total_literal,
+    dias_vigencia, tiempo_entrega, costo_revision, tipo_garantia, texto_garantia
+) VALUES (
+    'd0000000-0000-0000-0000-000000000101',
+    'a0000000-0000-0000-0000-000000000001',
+    'OS-80412',
+    'c0000000-0000-0000-0000-000000000001',
+    'b0000000-0000-0000-0000-000000000003',
+    'b0000000-0000-0000-0000-000000000002',
+    'Ana Morales',
+    'Roberto Gómez',
+    'DIAGNOSTICADO',
+    'USD',
+    6.96,
+    45.00,
+    75.00,
+    120.00,
+    'SON: CIENTO VEINTE 00/100 DÓLARES AMERICANOS',
+    5,
+    '1 a 2 semanas',
+    15.00,
+    'ESTANDAR_5_DIAS',
+    '5 días calendario a partir de la entrega para verificación operativa de los trabajos realizados.'
+) ON CONFLICT (numero_orden) DO NOTHING;
+
+-- Radio de la Orden 1
+INSERT INTO orden_equipos (
+    id, orden_id, orden_indice, marca, modelo, numero_serie, banda, estado_individual,
+    falla_declarada_cliente, texto_diagnostico, descripcion_servicio, costo_servicio
+) VALUES (
+    'e0000000-0000-0000-0000-000000001011',
+    'd0000000-0000-0000-0000-000000000101',
+    1,
+    'Motorola',
+    'DEP450',
+    '482TQA0192',
+    'VHF',
+    'DIAGNOSTICADO',
+    'Sin potencia de transmisión RF en canal 3',
+    'Se detectó módulo transmisor degradado emitiendo 1.2 Watts. Requiere sustitución de etapa excitadora y calibración.',
+    '(Servicio técnico, calibración de modulación RF, limpieza ultrasónica y mantenimiento preventivo)',
+    45.00
+) ON CONFLICT (id) DO NOTHING;
+
+-- Repuestos cotizados de la Orden 1
+INSERT INTO equipo_repuestos_cotizados (
+    equipo_id, nombre, estado_condicion, se_reemplaza, porcentaje_carga, falla_detalle, repuesto_sugerido, cantidad, precio
+) VALUES 
+    ('e0000000-0000-0000-0000-000000001011', 'Batería', 'Se sugiere reemplazo', true, 30, 'Celdas degradadas por ciclos', 'Batería Li-Ion Motorola PMNN4077', 1, 55.00),
+    ('e0000000-0000-0000-0000-000000001011', 'Antena', 'Se sugiere reemplazo', true, null, 'Goma cuarteada y descalibrada', 'Antena Heliflex VHF Stubby', 1, 20.00)
+ON CONFLICT DO NOTHING;
+
+-- Orden 2: En Taller (RECIBIDO) -> Para que el técnico la abra en mesa
+INSERT INTO ordenes_servicio (
+    id, sucursal_id, numero_orden, cliente_id, usuario_recepcion_id,
+    recepcionista_nombre_manual, estado, moneda, tasa_cambio, sumatoria_total
+) VALUES (
+    'd0000000-0000-0000-0000-000000000102',
+    'a0000000-0000-0000-0000-000000000001',
+    'OS-80415',
+    'c0000000-0000-0000-0000-000000000002',
+    'b0000000-0000-0000-0000-000000000003',
+    'Ana Morales',
+    'RECIBIDO',
+    'BOB',
+    6.96,
+    0.00
+) ON CONFLICT (numero_orden) DO NOTHING;
+
+-- Radios de la Orden 2 (Lote de 2 Handies)
+INSERT INTO orden_equipos (
+    id, orden_id, orden_indice, marca, modelo, numero_serie, banda, estado_individual,
+    falla_declarada_cliente, costo_servicio
+) VALUES 
+    (
+        'e0000000-0000-0000-0000-000000001021',
+        'd0000000-0000-0000-0000-000000000102',
+        1,
+        'Motorola',
+        'EP450',
+        '019TXA9931',
+        'UHF',
+        'RECIBIDO',
+        'No enciende o se apaga intermitentemente al transmitir.',
+        0.00
+    ),
+    (
+        'e0000000-0000-0000-0000-000000001022',
+        'd0000000-0000-0000-0000-000000000102',
+        2,
+        'Motorola',
+        'EP450',
+        '019TXA9932',
+        'UHF',
+        'RECIBIDO',
+        'Perilla de volumen rota, no modula en canal 2.',
+        0.00
+    )
+ON CONFLICT (id) DO NOTHING;
+
+-- ============================================================================
+-- FIN DEL SCRIPT MAESTRO DE BASE DE DATOS
+-- ============================================================================
