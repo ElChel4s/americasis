@@ -75,10 +75,23 @@ export default function NuevaOrdenPage() {
   };
 
   // Botón final de guardado exigido: [ Registrar Orden y Enviar a Taller ] -> estado RECIBIDO -> /recepcion/inicio
-  const handleRegistrarYEnviarATaller = async () => {
-    if (!formData.cliente.trim()) {
-      setErrorMsg('Por favor ingrese el nombre del cliente o razón social.');
+  const handleRegistrarYEnviarATaller = async (e) => {
+    if (e?.preventDefault) {
+      e.preventDefault();
+    }
+
+    if (!formData.cliente || !formData.cliente.trim()) {
+      const msg = 'Por favor ingrese el nombre del cliente o razón social.';
+      setErrorMsg(msg);
+      alert(msg);
       window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    if (!formData.equipos || formData.equipos.length === 0) {
+      const msg = 'Debe registrar al menos un equipo en la orden de servicio.';
+      setErrorMsg(msg);
+      alert(msg);
       return;
     }
 
@@ -86,19 +99,71 @@ export default function NuevaOrdenPage() {
     setErrorMsg('');
 
     try {
+      // 1. Sanitizar y mapear el payload (eliminar objetos File no serializables y transformar accesorios)
+      const equiposSanitizados = formData.equipos.map((eq, i) => {
+        const accs = Array.isArray(eq.accesorios) && eq.accesorios.length > 0
+          ? eq.accesorios
+          : Object.entries(eq.accesoriosRecepcion || {}).map(([nombre, presencia]) => ({
+              accesorio_nombre: nombre,
+              presencia: presencia || 'CON',
+              antena_estado: eq.antenaEstado || null,
+              antena_modelo_sugerido: eq.antenaModelo || null,
+              bateria_modelo: eq.bateriaModelo || null,
+              bateria_serie: eq.bateriaSerie || null,
+              bateria_porcentaje_carga: parseInt(eq.bateriaCarga, 10) || null,
+              otros_descripcion: eq.otrosDescripcion || null
+            }));
+
+        const imagenesSanitizadas = (eq.imagenes || []).map((img, imgIdx) => ({
+          id: img.id || `img-${i}-${imgIdx}-${Date.now()}`,
+          url: typeof img.url === 'string' ? img.url : '',
+          name: img.name || `Evidencia ${imgIdx + 1}`,
+          etapa: img.etapa || 'RECEPCION',
+          sizeKb: img.sizeKb || null
+        }));
+
+        return {
+          id: eq.id,
+          orden_indice: i + 1,
+          marca: eq.marca || 'Motorola',
+          modelo: eq.modelo || '',
+          numero_serie: (eq.serie || eq.numero_serie || `SER-${Date.now()}-${i}`).toUpperCase().trim(),
+          serie: (eq.serie || eq.numero_serie || `SER-${Date.now()}-${i}`).toUpperCase().trim(),
+          banda: eq.banda || 'VHF',
+          falla_declarada_cliente: eq.falla_declarada_cliente || '',
+          estado_individual: 'RECIBIDO',
+          accesorios: accs,
+          accesoriosRecepcion: eq.accesoriosRecepcion || {},
+          imagenes: imagenesSanitizadas
+        };
+      });
+
       const payload = {
         ...formData,
         razon_social: formData.cliente.trim(),
-        total_equipos: formData.equipos.length,
+        total_equipos: equiposSanitizados.length,
         estado: 'RECIBIDO',
-        estado_global: 'RECIBIDO'
+        estado_global: 'RECIBIDO',
+        equipos: equiposSanitizados
       };
 
-      await OrdersService.saveOrder(payload);
+      console.log('Iniciando guardado de orden...', payload);
+
+      const savedOrder = await OrdersService.saveOrder(payload);
+
+      if (!savedOrder) {
+        throw new Error('El servicio de órdenes no devolvió la confirmación del guardado.');
+      }
+
+      console.log('Orden guardada exitosamente:', savedOrder);
+      alert(`¡Orden #${savedOrder.numero_orden || payload.ordenServicio} registrada exitosamente!\nLos radios han sido derivados a la mesa de trabajo del técnico.`);
+      
       router.push('/recepcion/inicio');
-    } catch (err) {
-      console.error('Error al registrar orden:', err);
-      setErrorMsg('No se pudo guardar la orden de servicio. Intente nuevamente.');
+    } catch (error) {
+      console.error("Error al guardar la orden:", error);
+      const errMsg = error.message || "Error desconocido";
+      setErrorMsg("No se pudo guardar la orden: " + errMsg);
+      alert("No se pudo guardar la orden: " + errMsg);
       setIsSubmitting(false);
     }
   };

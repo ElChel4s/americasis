@@ -11,8 +11,11 @@ import {
   RotateCcw,
   Sparkles,
   Radio,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Smartphone
 } from 'lucide-react';
+import BarcodeScannerModal from '@/components/modals/BarcodeScannerModal';
+
 
 const ESTADOS_FILTRO = [
   { id: 'TODOS', label: 'Todos', dot: 'bg-slate-400' },
@@ -45,7 +48,9 @@ export default function SearchFiltersBar({
 }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [localSearch, setLocalSearch] = useState(searchQuery || '');
+  const [isBarcodeModalOpen, setIsBarcodeModalOpen] = useState(false);
   const searchInputRef = useRef(null);
+
 
   // Sincronizar input con prop
   useEffect(() => {
@@ -123,16 +128,27 @@ export default function SearchFiltersBar({
 
                 <button
                   type="button"
+                  onClick={() => setIsBarcodeModalOpen(true)}
+                  className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 transition-colors border border-red-200 cursor-pointer shadow-xs"
+                  title="Escanear código de barras con la cámara de tu celular"
+                >
+                  <Smartphone size={13} className="text-red-500" />
+                  <span className="hidden xs:inline">Celular</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={handlePistolaFocus}
-                  className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-600 bg-slate-100 hover:bg-red-50 hover:text-red-600 transition-colors border border-slate-200"
+                  className="hidden sm:flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors border border-slate-200"
                   title="Enfocar para disparo de pistola o lector de código de barras"
                 >
-                  <ScanLine size={14} className="text-red-500" />
-                  <span>Escanear</span>
+                  <ScanLine size={13} className="text-slate-500" />
+                  <span>Pistola</span>
                 </button>
               </div>
             </div>
           </div>
+
 
           {/* Botón Filtros Avanzados y Contador */}
           <div className="flex items-center justify-between md:justify-end gap-2 shrink-0">
@@ -274,6 +290,18 @@ export default function SearchFiltersBar({
         )}
 
       </div>
+
+      <BarcodeScannerModal
+        isOpen={isBarcodeModalOpen}
+        onClose={() => setIsBarcodeModalOpen(false)}
+        onScan={(scannedCode) => {
+          setLocalSearch(scannedCode);
+          onSearchChange(scannedCode);
+        }}
+        title="Buscar por Código de Barras Móvil"
+        subtitle="Apunta la cámara del celular al handy para filtrar automáticamente la orden en pantalla"
+      />
     </div>
   );
 }
+

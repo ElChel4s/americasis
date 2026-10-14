@@ -41,6 +41,9 @@ RUN adduser --system --uid 1001 nextjs
 
 COPY --from=builder /app/public ./public
 
+# Ensure uploads directory exists and is fully writable by nextjs user
+RUN mkdir -p ./public/uploads/evidencias && chown -R nextjs:nodejs ./public
+
 # Set the correct permission for prerender cache
 RUN mkdir .next
 RUN chown nextjs:nodejs .next
@@ -50,6 +53,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 USER nextjs
+
 
 EXPOSE 3010
 

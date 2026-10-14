@@ -13,6 +13,7 @@
     "bcryptjs": "^3.0.3",
     "clsx": "^2.1.1",
     "docx": "^9.8.1",
+    "html5-qrcode": "^2.3.8",
     "jose": "^6.2.12",
     "js-cookie": "^3.0.8",
     "jsonwebtoken": "^9.0.3",

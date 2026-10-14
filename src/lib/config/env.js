@@ -3,7 +3,7 @@ import { z } from 'zod';
 const envSchema = z.object({
   DATABASE_URL: z.string().url().default('postgresql://postgres:postgres@localhost:5432/sistema_america'),
   JWT_SECRET: z.string().min(16).default('super_secret_jwt_key_america_erp_2026_dev'),
-  STORAGE_DRIVER: z.enum(['SUPABASE', 'LOCAL']).default('LOCAL'),
+  STORAGE_DRIVER: z.enum(['SUPABASE', 'LOCAL']).default('SUPABASE'),
   SUPABASE_URL: z.string().url().optional().or(z.literal('')),
   SUPABASE_ANON_KEY: z.string().optional().or(z.literal('')),
   ENABLE_AUTH: z.union([z.boolean(), z.string()]).transform((s) => s === true || s === 'true').default(true),
@@ -16,7 +16,8 @@ const envSchema = z.object({
 const _env = envSchema.safeParse({
   DATABASE_URL: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/sistema_america',
   JWT_SECRET: process.env.JWT_SECRET || 'super_secret_jwt_key_america_erp_2026_dev',
-  STORAGE_DRIVER: process.env.STORAGE_DRIVER || 'LOCAL',
+  STORAGE_DRIVER: process.env.STORAGE_DRIVER || 'SUPABASE',
+
   SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL,
   SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY,
   ENABLE_AUTH: process.env.ENABLE_AUTH !== 'false',

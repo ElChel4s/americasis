@@ -1,10 +1,12 @@
 "use client";
 
 import React, { useState, useRef } from 'react';
-import { User, ScanLine, Settings2, Camera, Upload, ImagePlus, X, Aperture, Plus, Radio, Trash2 } from 'lucide-react';
+import { User, ScanLine, Settings2, Camera, Upload, ImagePlus, X, Aperture, Plus, Radio, Trash2, Smartphone } from 'lucide-react';
 import QrMobileModal from '@/components/modals/QrMobileModal';
 import ImageCropModal from '@/components/modals/ImageCropModal';
+import BarcodeScannerModal from '@/components/modals/BarcodeScannerModal';
 import EquipmentTabs from '@/components/orders/EquipmentTabs';
+
 
 const MARCAS_RADIO = ['Motorola', 'Vertex Standard', 'Yaesu', 'Kenwood', 'Icom', 'Hytera', 'Baofeng', 'Otro'];
 const MODELOS_COMUNES = ['DEP450', 'PRO5150', 'EP450', 'DGM4100', 'DGP8550', 'VX-2100', 'VX-2200', 'FT-2980R', 'EM200'];
@@ -22,6 +24,8 @@ export default function Step1Reception({
 }) {
   const [showQRModal, setShowQRModal] = useState(false);
   const [showCatalogModal, setShowCatalogModal] = useState(false);
+  const [isBarcodeModalOpen, setIsBarcodeModalOpen] = useState(false);
+
   const [nuevoAccesorioRecepcion, setNuevoAccesorioRecepcion] = useState('');
   const [catalogoRecepcion, setCatalogoRecepcion] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -88,28 +92,22 @@ export default function Step1Reception({
     
     setIsOptimizing(true);
     try {
-      const { compressImage } = await import('@/lib/utils/imageCompressor');
+      const { compressToSafeEvidence } = await import('@/lib/utils/imageCompressor');
       const currentImages = equipo.imagenes || [];
-      const newPreviews = [...currentImages];
+      const newItems = [];
       
-      const optimizations = Array.from(files).map(async (file) => {
-        const optimizedFile = await compressImage(file, {
-          maxWidth: 1200,
-          maxHeight: 1200,
-          quality: 0.78,
-          returnType: 'file'
+      for (const file of Array.from(files)) {
+        const safeImg = await compressToSafeEvidence(file, {
+          etapa: 'RECEPCION',
+          name: file.name
         });
-        const url = URL.createObjectURL(optimizedFile);
-        return { url, name: optimizedFile.name, file: optimizedFile, etapa: 'RECEPCION' };
-      });
+        newItems.push(safeImg);
+      }
       
-      const compressedFiles = await Promise.all(optimizations);
-      newPreviews.push(...compressedFiles);
-      
-      updateEquipo(activeEquipoIndex, { imagenes: newPreviews });
+      updateEquipo(activeEquipoIndex, { imagenes: [...currentImages, ...newItems] });
     } catch (err) {
       console.error('Error optimizando imágenes en Step 1:', err);
-      alert('Hubo un error al optimizar las imágenes.');
+      alert('Hubo un error al optimizar las imágenes: ' + (err.message || 'Error desconocido'));
     } finally {
       setIsOptimizing(false);
     }
@@ -119,21 +117,18 @@ export default function Step1Reception({
     setCropModalOpen(false);
     try {
       setIsOptimizing(true);
-      const { compressImage } = await import('@/lib/utils/imageCompressor');
-      const rawFile = new File([croppedBlob], `recepcion-${Date.now()}.webp`, { type: 'image/webp' });
-      const optimizedFile = await compressImage(rawFile, {
-        maxWidth: 1200,
-        maxHeight: 1200,
-        quality: 0.80,
-        returnType: 'file'
+      const { compressToSafeEvidence } = await import('@/lib/utils/imageCompressor');
+      const safeImg = await compressToSafeEvidence(croppedBlob, {
+        etapa: 'RECEPCION',
+        name: `recepcion-${Date.now()}.webp`
       });
-      const url = URL.createObjectURL(optimizedFile);
       const currentImages = equipo.imagenes || [];
       updateEquipo(activeEquipoIndex, {
-        imagenes: [...currentImages, { url, name: optimizedFile.name, file: optimizedFile, etapa: 'RECEPCION' }]
+        imagenes: [...currentImages, safeImg]
       });
     } catch (err) {
       console.error('Error procesando imagen recortada:', err);
+      alert('Error procesando foto recortada: ' + (err.message || 'Error desconocido'));
     } finally {
       setIsOptimizing(false);
     }
@@ -234,10 +229,21 @@ export default function Step1Reception({
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="input-label mb-0">Número de Serie (S/N)</label>
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                    <ScanLine size={11} className="text-emerald-600" />
-                    Pistola / Escáner
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setIsBarcodeModalOpen(true)}
+                      className="inline-flex items-center gap-1.5 text-[11px] font-bold text-red-600 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded-lg border border-red-200 transition-all shadow-xs cursor-pointer active:scale-95"
+                      title="Abrir lector inalámbrico con la cámara de tu celular"
+                    >
+                      <Smartphone size={13} className="text-red-600" />
+                      <span>Escanear con Celular</span>
+                    </button>
+                    <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                      <ScanLine size={11} className="text-emerald-600" />
+                      Pistola USB
+                    </span>
+                  </div>
                 </div>
                 <div className="flex gap-2">
                   <input 
@@ -259,17 +265,12 @@ export default function Step1Reception({
                   />
                   <button 
                     type="button"
-                    onClick={() => {
-                      const input = document.getElementById(`input-serie-equipo-${activeEquipoIndex}`);
-                      if (input) {
-                        input.focus();
-                        input.select();
-                      }
-                    }}
-                    className="px-3.5 rounded-xl border-2 flex items-center justify-center transition-all bg-white border-slate-200 text-slate-600 hover:border-red-400 hover:text-red-600 hover:bg-red-50"
-                    title="Enfocar campo para disparar con pistola lectora de código de barras"
+                    onClick={() => setIsBarcodeModalOpen(true)}
+                    className="px-3.5 rounded-xl border-2 flex items-center justify-center gap-1.5 transition-all bg-red-600 border-red-600 text-white hover:bg-red-700 shadow-md shadow-red-600/20 active:scale-95 cursor-pointer"
+                    title="Usar la cámara de tu celular como lector de código de barras"
                   >
-                    <ScanLine size={20} />
+                    <Smartphone size={16} />
+                    <ScanLine size={18} />
                   </button>
                 </div>
               </div>
@@ -681,6 +682,17 @@ export default function Step1Reception({
         onCropComplete={handleCropComplete}
         onClose={() => setCropModalOpen(false)}
       />
+
+      <BarcodeScannerModal
+        isOpen={isBarcodeModalOpen}
+        onClose={() => setIsBarcodeModalOpen(false)}
+        onScan={(scannedCode) => {
+          updateEquipo(activeEquipoIndex, { serie: scannedCode });
+        }}
+        title={`Lector Móvil — Handy #${activeEquipoIndex + 1}`}
+        subtitle="Escanea el código QR con tu celular para enviar el serial directamente a este campo"
+      />
     </div>
   );
 }
+

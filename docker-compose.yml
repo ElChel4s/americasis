@@ -15,6 +15,7 @@ services:
       - NODE_ENV=production
       - PORT=3010
       - ENABLE_AUTH=true
+      - STORAGE_DRIVER=${STORAGE_DRIVER:-SUPABASE}
       - DATABASE_URL=${DATABASE_URL}
       - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-https://puzktxdrfeungpmzsjhd.supabase.co}
       - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-sb_publishable_cl9TF_2lnbhJeIcLRvGUfQ_VVAotgMl}
@@ -22,3 +23,4 @@ services:
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-sb_publishable_cl9TF_2lnbhJeIcLRvGUfQ_VVAotgMl}
       - JWT_SECRET=${JWT_SECRET:-super_secret_jwt_key_america_erp_2026_dev}
     restart: always
+

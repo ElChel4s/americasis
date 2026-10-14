@@ -191,21 +191,18 @@ export default function Step2Diagnosis({
     setCropModalOpen(false);
     try {
       setIsOptimizing(true);
-      const { compressImage } = await import('@/lib/utils/imageCompressor');
-      const rawFile = new File([croppedBlob], `diag-${Date.now()}.webp`, { type: 'image/webp' });
-      const optimizedFile = await compressImage(rawFile, {
-        maxWidth: 1200,
-        maxHeight: 1200,
-        quality: 0.80,
-        returnType: 'file'
+      const { compressToSafeEvidence } = await import('@/lib/utils/imageCompressor');
+      const safeImg = await compressToSafeEvidence(croppedBlob, {
+        etapa: 'DIAGNOSTICO',
+        name: `diag-${Date.now()}.webp`
       });
-      const url = URL.createObjectURL(optimizedFile);
       setImagenesInternas((prev) => [
         ...prev,
-        { url, name: optimizedFile.name, file: optimizedFile, etapa: 'DIAGNOSTICO' }
+        safeImg
       ]);
     } catch (err) {
       console.error('Error procesando imagen recortada en diagnóstico:', err);
+      alert('Error al procesar foto recortada: ' + (err.message || 'Error desconocido'));
     } finally {
       setIsOptimizing(false);
     }
@@ -868,26 +865,21 @@ export default function Step2Diagnosis({
 
                 setIsOptimizing(true);
                 try {
-                  const { compressImage } = await import('@/lib/utils/imageCompressor');
+                  const { compressToSafeEvidence } = await import('@/lib/utils/imageCompressor');
                   const newPreviews = [...imagenesInternas];
                   
-                  const optimizations = Array.from(files).map(async (file) => {
-                    const optimizedFile = await compressImage(file, {
-                      maxWidth: 1200,
-                      maxHeight: 1200,
-                      quality: 0.78,
-                      returnType: 'file'
+                  for (const file of Array.from(files)) {
+                    const safeImg = await compressToSafeEvidence(file, {
+                      etapa: 'DIAGNOSTICO',
+                      name: file.name
                     });
-                    const url = URL.createObjectURL(optimizedFile);
-                    return { url, name: optimizedFile.name, file: optimizedFile, etapa: 'DIAGNOSTICO' };
-                  });
+                    newPreviews.push(safeImg);
+                  }
                   
-                  const compressedFiles = await Promise.all(optimizations);
-                  newPreviews.push(...compressedFiles);
                   setImagenesInternas(newPreviews);
                 } catch (err) {
                   console.error('Error optimizando imágenes en Step 2:', err);
-                  alert('Error al optimizar imágenes.');
+                  alert('Error al optimizar imágenes: ' + (err.message || 'Error desconocido'));
                 } finally {
                   setIsOptimizing(false);
                   e.target.value = '';

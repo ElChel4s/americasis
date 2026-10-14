@@ -38,6 +38,17 @@ export default function FrontDeskDashboard() {
 
   useEffect(() => {
     fetchOrders();
+
+    const handleOrdersUpdated = () => {
+      fetchOrders();
+    };
+
+    window.addEventListener('america_orders_updated', handleOrdersUpdated);
+    window.addEventListener('storage', handleOrdersUpdated);
+    return () => {
+      window.removeEventListener('america_orders_updated', handleOrdersUpdated);
+      window.removeEventListener('storage', handleOrdersUpdated);
+    };
   }, []);
 
   const showToast = (msg) => {

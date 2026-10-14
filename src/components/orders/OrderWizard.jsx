@@ -298,7 +298,9 @@ function ServiceOrderWizardContent() {
     }
   };
 
-  const handleGuardarOrden = async (estadoFinal = 'BORRADOR') => {
+  const handleGuardarOrden = async (estadoFinal = 'BORRADOR', e) => {
+    if (e?.preventDefault) e.preventDefault();
+
     try {
       setIsSaving(true);
       const { OrdersService } = await import('@/lib/services/orders.service');
@@ -324,6 +326,14 @@ function ServiceOrderWizardContent() {
             otros_descripcion: nombre.toLowerCase() === 'otros' ? eq.otrosDescripcion : null,
           }));
 
+          const safeImagenes = (eq.imagenes || []).map((img, imgIdx) => ({
+            id: img.id || `img-${i}-${imgIdx}-${Date.now()}`,
+            url: typeof img.url === 'string' ? img.url : '',
+            name: img.name || `Evidencia ${imgIdx + 1}`,
+            etapa: img.etapa || 'RECEPCION',
+            sizeKb: img.sizeKb || null
+          }));
+
           return {
             orden_indice: i + 1,
             marca: eq.marca || 'Motorola',
@@ -338,10 +348,13 @@ function ServiceOrderWizardContent() {
             costo_servicio: parseFloat(eq.costo_servicio) || 0,
             accesorios: accs,
             fallas: eq.fallas || [],
-            repuestos: eq.repuestos || []
+            repuestos: eq.repuestos || [],
+            imagenes: safeImagenes
           };
         })
       };
+
+      console.log('Iniciando guardado de orden...', payload);
 
       const nuevaOrden = await OrdersService.saveOrder(payload);
 
@@ -354,10 +367,13 @@ function ServiceOrderWizardContent() {
         }
       } else {
         showToast('No se pudo guardar la orden de servicio.', 'error');
+        alert('No se pudo guardar la orden de servicio. Intente nuevamente.');
       }
     } catch (err) {
       console.error('Error guardando orden:', err);
-      showToast('Error de red al guardar la orden', 'error');
+      const errMsg = err?.message || 'Error de red o almacenamiento';
+      showToast('Error al guardar la orden: ' + errMsg, 'error');
+      alert('No se pudo guardar la orden: ' + errMsg);
     } finally {
       setIsSaving(false);
     }

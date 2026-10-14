@@ -8,46 +8,50 @@ import path from 'path';
  * Compatible con Supabase Storage (bucket 'evidencias-radios') y Disco Local (/public/uploads/evidencias)
  * @param {Buffer} fileBuffer - Buffer del archivo
  * @param {string} originalName - Nombre original del archivo
- * @param {string} mimeType - Tipo MIME (image/jpeg, image/png, etc.)
+ * @param {string} mimeType - Tipo MIME (image/jpeg, image/png, image/webp, etc.)
  * @returns {Promise<{ url: string, driver: string, fileName: string, sizeBytes: number, mimeType: string }>}
  */
-export const uploadFile = async (fileBuffer, originalName = 'foto.jpg', mimeType = 'image/jpeg') => {
+export const uploadFile = async (fileBuffer, originalName = 'foto.webp', mimeType = 'image/webp') => {
   const sanitizedName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_');
   const uniqueName = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${sanitizedName}`;
   const sizeBytes = fileBuffer.length;
+  const effectiveMime = (mimeType && mimeType.startsWith('image/')) ? mimeType : 'image/jpeg';
 
-  if (env.STORAGE_DRIVER === 'SUPABASE') {
-    if (!supabase) {
-      console.warn('⚠️ Supabase no configurado pero STORAGE_DRIVER=SUPABASE. Revisa SUPABASE_URL / SUPABASE_ANON_KEY.');
-      throw new Error('Supabase Storage no está configurado correctamente en .env');
+  // 1. PRIORIDAD: Supabase Storage Cloud si está disponible
+  if (supabase) {
+    try {
+      const storagePath = `evidencias/${uniqueName}`;
+      const { data, error } = await supabase.storage
+        .from('evidencias-radios')
+        .upload(storagePath, fileBuffer, {
+          contentType: effectiveMime,
+          upsert: true
+        });
+
+      if (!error && data) {
+        const { data: { publicUrl } } = supabase.storage
+          .from('evidencias-radios')
+          .getPublicUrl(data.path);
+
+        return {
+          url: publicUrl,
+          driver: 'SUPABASE',
+          fileName: uniqueName,
+          sizeBytes,
+          mimeType: effectiveMime
+        };
+      }
+
+      if (error) {
+        console.warn('⚠️ Advertencia subiendo a Supabase Storage, probando almacenamiento alternativo:', error.message);
+      }
+    } catch (sbErr) {
+      console.warn('⚠️ Excepción conectando a Supabase Storage:', sbErr.message);
     }
+  }
 
-    const storagePath = `evidencias/${uniqueName}`;
-    const { data, error } = await supabase.storage
-      .from('evidencias-radios')
-      .upload(storagePath, fileBuffer, {
-        contentType: mimeType,
-        upsert: false
-      });
-
-    if (error) {
-      console.error('Error al subir a Supabase Storage:', error);
-      throw error;
-    }
-
-    const { data: { publicUrl } } = supabase.storage
-      .from('evidencias-radios')
-      .getPublicUrl(data.path);
-
-    return {
-      url: publicUrl,
-      driver: 'SUPABASE',
-      fileName: uniqueName,
-      sizeBytes,
-      mimeType
-    };
-  } else {
-    // Almacenamiento en Disco Local (/public/uploads/evidencias)
+  // 2. Fallback a Disco Local (/public/uploads/evidencias)
+  try {
     const uploadsDir = path.join(process.cwd(), 'public', 'uploads', 'evidencias');
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir, { recursive: true });
@@ -56,7 +60,6 @@ export const uploadFile = async (fileBuffer, originalName = 'foto.jpg', mimeType
     const destinationPath = path.join(uploadsDir, uniqueName);
     fs.writeFileSync(destinationPath, fileBuffer);
 
-    // URL accesible públicamente a través del servidor web Next.js
     const publicUrl = `/uploads/evidencias/${uniqueName}`;
 
     return {
@@ -64,7 +67,22 @@ export const uploadFile = async (fileBuffer, originalName = 'foto.jpg', mimeType
       driver: 'LOCAL',
       fileName: uniqueName,
       sizeBytes,
-      mimeType
+      mimeType: effectiveMime
+    };
+  } catch (fsErr) {
+    console.warn('⚠️ No se pudo escribir en disco local (/public/uploads):', fsErr.message);
+
+    // 3. Fallback Infalible: Data URI en Base64 para que NUNCA falle la subida de foto por permisos de carpeta
+    const base64Data = fileBuffer.toString('base64');
+    const dataUrl = `data:${effectiveMime};base64,${base64Data}`;
+
+    return {
+      url: dataUrl,
+      driver: 'INLINE',
+      fileName: uniqueName,
+      sizeBytes,
+      mimeType: effectiveMime
     };
   }
 };
+
