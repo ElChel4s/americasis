@@ -1,4 +1,5 @@
 import { pool } from '../../lib/config/database';
+import { supabase } from '../../lib/config/supabase-client';
 
 // Hash bcrypt de 'America2026!' generado con 10 rounds
 const DEFAULT_PASSWORD_HASH = '$2b$10$0VYKfuMtSx.k6FGWQ.5mEu61FLzQCktOax6RQfXxdUcKfHeLB7h66';
@@ -6,8 +7,8 @@ const DEFAULT_PASSWORD_HASH = '$2b$10$0VYKfuMtSx.k6FGWQ.5mEu61FLzQCktOax6RQfXxdU
 // Memoria volátil para desarrollo offline (antes de conectar a Supabase/PostgreSQL)
 let mockUsers = [
   {
-    id: 1,
-    sucursal_id: 1,
+    id: 'b0000000-0000-0000-0000-000000000001',
+    sucursal_id: 'a0000000-0000-0000-0000-000000000001',
     nombre_completo: 'Administrador General',
     email: 'admin',
     password_hash: DEFAULT_PASSWORD_HASH,
@@ -18,8 +19,8 @@ let mockUsers = [
     creado_en: '2026-01-10T08:00:00Z',
   },
   {
-    id: 2,
-    sucursal_id: 1,
+    id: 'b0000000-0000-0000-0000-000000000002',
+    sucursal_id: 'a0000000-0000-0000-0000-000000000001',
     nombre_completo: 'Roberto Gómez (Técnico RF)',
     email: 'tecnico',
     password_hash: DEFAULT_PASSWORD_HASH,
@@ -30,8 +31,8 @@ let mockUsers = [
     creado_en: '2026-02-01T10:00:00Z',
   },
   {
-    id: 3,
-    sucursal_id: 1,
+    id: 'b0000000-0000-0000-0000-000000000003',
+    sucursal_id: 'a0000000-0000-0000-0000-000000000001',
     nombre_completo: 'Ana Morales (Recepción)',
     email: 'recepcion',
     password_hash: DEFAULT_PASSWORD_HASH,
@@ -49,6 +50,20 @@ export const AuthRepository = {
    */
   async findByEmail(email) {
     const cleanEmail = email ? email.trim().toLowerCase() : '';
+
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('usuarios')
+          .select('id, sucursal_id, nombre_completo, email, password_hash, rol, activo, token_version, ultimo_login, creado_en')
+          .ilike('email', cleanEmail)
+          .limit(1)
+          .maybeSingle();
+
+        if (data && !error) return data;
+      } catch (err) {}
+    }
+
     try {
       const { rows } = await pool.query(
         `SELECT id, sucursal_id, nombre_completo, email, password_hash, rol, activo, token_version, ultimo_login, creado_en 
@@ -59,7 +74,6 @@ export const AuthRepository = {
       );
       return rows[0] || null;
     } catch (err) {
-      // Modo offline fallback
       const found = mockUsers.find(u => u.email.toLowerCase() === cleanEmail);
       return found ? { ...found } : null;
     }
@@ -69,6 +83,18 @@ export const AuthRepository = {
    * Busca un usuario por ID
    */
   async findById(id) {
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('usuarios')
+          .select('id, sucursal_id, nombre_completo, email, password_hash, rol, activo, token_version, ultimo_login, creado_en')
+          .eq('id', id)
+          .maybeSingle();
+
+        if (data && !error) return data;
+      } catch (err) {}
+    }
+
     try {
       const { rows } = await pool.query(
         `SELECT id, sucursal_id, nombre_completo, email, password_hash, rol, activo, token_version, ultimo_login, creado_en 
@@ -88,6 +114,19 @@ export const AuthRepository = {
    * Actualiza el timestamp de último login
    */
   async updateLastLogin(id) {
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('usuarios')
+          .update({ ultimo_login: new Date().toISOString() })
+          .eq('id', id)
+          .select('id, sucursal_id, nombre_completo, email, rol, activo, token_version, ultimo_login')
+          .maybeSingle();
+
+        if (data && !error) return data;
+      } catch (err) {}
+    }
+
     try {
       const { rows } = await pool.query(
         `UPDATE usuarios 
@@ -111,6 +150,26 @@ export const AuthRepository = {
    * Actualiza la contraseña e incrementa el token_version para forzar invalidación de sesiones
    */
   async updatePassword(id, passwordHash) {
+    if (supabase) {
+      try {
+        // Obtenemos token_version actual
+        const { data: curr } = await supabase.from('usuarios').select('token_version').eq('id', id).maybeSingle();
+        const nextVersion = (curr?.token_version || 1) + 1;
+
+        const { data, error } = await supabase
+          .from('usuarios')
+          .update({
+            password_hash: passwordHash,
+            token_version: nextVersion
+          })
+          .eq('id', id)
+          .select('id, sucursal_id, nombre_completo, email, rol, activo, token_version')
+          .maybeSingle();
+
+        if (data && !error) return data;
+      } catch (err) {}
+    }
+
     try {
       const { rows } = await pool.query(
         `UPDATE usuarios 
@@ -135,6 +194,17 @@ export const AuthRepository = {
    * Lista todos los usuarios para la vista administrativa
    */
   async listUsers() {
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('usuarios')
+          .select('id, sucursal_id, nombre_completo, email, rol, activo, token_version, ultimo_login, creado_en')
+          .order('creado_en', { ascending: true });
+
+        if (data && !error && data.length > 0) return data;
+      } catch (err) {}
+    }
+
     try {
       const { rows } = await pool.query(
         `SELECT id, sucursal_id, nombre_completo, email, rol, activo, token_version, ultimo_login, creado_en 
@@ -152,6 +222,27 @@ export const AuthRepository = {
    */
   async createUser({ sucursal_id = null, nombre_completo, email, password_hash, rol = 'TECNICO', activo = true }) {
     const cleanEmail = email.trim().toLowerCase();
+
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('usuarios')
+          .insert({
+            sucursal_id: sucursal_id || 'a0000000-0000-0000-0000-000000000001',
+            nombre_completo: nombre_completo.trim(),
+            email: cleanEmail,
+            password_hash,
+            rol,
+            activo,
+            token_version: 1
+          })
+          .select('id, sucursal_id, nombre_completo, email, rol, activo, token_version, ultimo_login, creado_en')
+          .single();
+
+        if (data && !error) return data;
+      } catch (err) {}
+    }
+
     try {
       const { rows } = await pool.query(
         `INSERT INTO usuarios (sucursal_id, nombre_completo, email, password_hash, rol, activo, token_version, creado_en)
@@ -183,6 +274,26 @@ export const AuthRepository = {
    * Actualiza datos de un usuario (rol, activo, sucursal, contraseña opcional)
    */
   async updateUser(id, { nombre_completo, rol, activo, sucursal_id, password_hash }) {
+    if (supabase) {
+      try {
+        const updatePayload = {};
+        if (nombre_completo !== undefined) updatePayload.nombre_completo = nombre_completo.trim();
+        if (rol !== undefined) updatePayload.rol = rol;
+        if (activo !== undefined) updatePayload.activo = activo;
+        if (sucursal_id !== undefined) updatePayload.sucursal_id = sucursal_id;
+        if (password_hash) updatePayload.password_hash = password_hash;
+
+        const { data, error } = await supabase
+          .from('usuarios')
+          .update(updatePayload)
+          .eq('id', id)
+          .select('id, sucursal_id, nombre_completo, email, rol, activo, token_version, ultimo_login, creado_en')
+          .maybeSingle();
+
+        if (data && !error) return data;
+      } catch (err) {}
+    }
+
     try {
       const { rows } = await pool.query(
         `UPDATE usuarios
@@ -217,7 +328,6 @@ export const AuthRepository = {
       if (rol !== undefined) user.rol = rol;
       if (activo !== undefined) {
         if (user.activo && !activo) {
-          // Desactivando cuenta -> invalidar sesiones
           user.token_version = (user.token_version || 1) + 1;
         }
         user.activo = activo;

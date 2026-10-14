@@ -109,5 +109,24 @@ export const OrdersService = {
 
   async getActiveOrders(filters = {}) {
     return await OrdersRepository.getAllActiveOrders(filters);
+  },
+
+  async updateOrderGeneral(orderId, updateData, user) {
+    const result = await OrdersRepository.updateOrderGeneral(orderId, updateData);
+
+    try {
+      await logAudit({
+        ordenId: typeof orderId === 'string' && orderId.length > 20 ? orderId : parseInt(orderId, 10),
+        usuarioId: user?.id || null,
+        usuarioNombre: user?.nombre_completo || 'Operador',
+        usuarioRol: user?.rol || 'RECEPCION',
+        accion: 'ACTUALIZAR_ORDEN',
+        estadoNuevo: updateData.estado || updateData.status || null,
+        detalleCambio: `Actualización general de la orden. Estado: ${updateData.estado || 'sin cambio'}`
+      });
+    } catch (e) {}
+
+    return result;
   }
 };
+

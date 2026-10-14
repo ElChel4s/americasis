@@ -82,6 +82,7 @@ export const OrdersService = {
           order: {
             sucursal_id: data.sucursal_id || 'a0000000-0000-0000-0000-000000000001',
             cliente_id: data.cliente_id || null,
+            razon_social: data.razon_social || data.cliente || 'Consumidor Final',
             recepcionista_nombre_manual: data.recepcionista_nombre_manual || 'Recepción Mostrador',
             estado: data.estado || 'RECIBIDO',
             moneda: data.moneda || 'BOB',
@@ -139,6 +140,14 @@ export const OrdersService = {
 
   updateOrderStatus: async (id, status) => {
     if (typeof window === 'undefined') return null;
+    try {
+      await fetch(`/api/orders/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado: status })
+      });
+    } catch (e) {}
+
     const orders = await OrdersService.getOrders();
     const index = orders.findIndex(o => String(o.id) === String(id));
     if (index >= 0) {
@@ -197,6 +206,19 @@ export const OrdersService = {
    */
   saveBudget: async (id, { moneda, equipos, condiciones, sumatoria_total }) => {
     if (typeof window === 'undefined') return null;
+    try {
+      await fetch(`/api/orders/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          estado: 'COTIZADO',
+          moneda,
+          condiciones,
+          sumatoria_total
+        })
+      });
+    } catch (e) {}
+
     const orders = await OrdersService.getOrders();
     const index = orders.findIndex(o => String(o.id) === String(id));
     if (index >= 0) {

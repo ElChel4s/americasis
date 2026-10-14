@@ -1,6 +1,8 @@
 import { query } from '../../lib/config/database';
+import { supabase } from '../../lib/config/supabase-client';
 
 const MOCK_ORDERS = [];
+
 const OLD_MOCK_ORDERS = [
   {
     id: 124,
@@ -261,9 +263,74 @@ export const SearchRepository = {
    * (Consulta PostgreSQL/Supabase con fallback inteligente a datos locales)
    */
   async searchOrders(filters = {}) {
+    if (supabase) {
+      try {
+        let q = supabase
+          .from('ordenes_servicio')
+          .select('*, clientes (razon_social, nit_ci, telefono, email, persona_contacto), orden_equipos (*)', { count: 'exact' })
+          .order('creado_en', { ascending: false });
+
+        if (filters.estado && filters.estado !== 'TODOS') {
+          if (Array.isArray(filters.estado)) {
+            q = q.in('estado', filters.estado);
+          } else {
+            q = q.eq('estado', filters.estado);
+          }
+        }
+
+        const limit = Math.max(1, Math.min(100, parseInt(filters.limit, 10) || 15));
+        const page = Math.max(1, parseInt(filters.page, 10) || 1);
+        const offset = (page - 1) * limit;
+
+        q = q.range(offset, offset + limit - 1);
+
+        const { data: rows, count, error } = await q;
+
+        if (!error && rows) {
+          let filteredRows = rows;
+          if (filters.q && typeof filters.q === 'string' && filters.q.trim()) {
+            const term = filters.q.trim().toLowerCase();
+            filteredRows = rows.filter(o => 
+              (o.numero_orden && o.numero_orden.toLowerCase().includes(term)) ||
+              (o.clientes?.razon_social && o.clientes.razon_social.toLowerCase().includes(term)) ||
+              (o.clientes?.nit_ci && o.clientes.nit_ci.toLowerCase().includes(term)) ||
+              (o.orden_equipos && o.orden_equipos.some(eq => 
+                (eq.numero_serie && eq.numero_serie.toLowerCase().includes(term)) ||
+                (eq.modelo && eq.modelo.toLowerCase().includes(term))
+              ))
+            );
+          }
+
+          const mapped = filteredRows.map(o => ({
+            ...o,
+            razon_social: o.clientes?.razon_social || 'Consumidor Final',
+            nit_ci: o.clientes?.nit_ci || '',
+            cliente_telefono: o.clientes?.telefono || '',
+            cliente_email: o.clientes?.email || '',
+            persona_contacto: o.clientes?.persona_contacto || '',
+            total_equipos: o.orden_equipos?.length || 0,
+            equipos: o.orden_equipos || []
+          }));
+
+          return {
+            orders: mapped,
+            pagination: {
+              page,
+              limit,
+              totalRecords: count || mapped.length,
+              totalPages: Math.ceil((count || mapped.length) / limit)
+            }
+          };
+        }
+      } catch (sbErr) {
+        console.warn('[SearchRepository] Supabase searchOrders error, probando PG:', sbErr.message);
+      }
+    }
+
     try {
       const conditions = [];
       const params = [];
+
 
       // 1. Omnibar: Búsqueda por texto
       if (filters.q && typeof filters.q === 'string' && filters.q.trim()) {

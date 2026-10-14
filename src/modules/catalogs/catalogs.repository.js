@@ -1,4 +1,5 @@
 import { query } from '../../lib/config/database';
+import { supabase } from '../../lib/config/supabase-client';
 
 // Fallback en memoria en caso de desarrollo offline
 let fallbackAccessories = [
@@ -45,6 +46,20 @@ export const CatalogsRepository = {
    * Obtiene todas las fallas de placa
    */
   async getFaults({ includeInactive = false } = {}) {
+    if (supabase) {
+      try {
+        let q = supabase
+          .from('catalogo_fallas_placa')
+          .select('codigo, categoria, label, descripcion, es_sistema, activo, creado_en')
+          .order('categoria', { ascending: true })
+          .order('label', { ascending: true });
+        
+        if (!includeInactive) q = q.eq('activo', true);
+        const { data, error } = await q;
+        if (!error && data && data.length > 0) return data;
+      } catch (err) {}
+    }
+
     try {
       const where = includeInactive ? '' : 'WHERE activo = true';
       const { rows } = await query(`
@@ -67,6 +82,25 @@ export const CatalogsRepository = {
       .toUpperCase()
       .trim()
       .replace(/[^A-Z0-9_]/g, '_');
+
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('catalogo_fallas_placa')
+          .upsert({
+            codigo: cleanCode,
+            categoria: (categoria || 'TX').toUpperCase(),
+            label: label.trim(),
+            descripcion: descripcion.trim(),
+            es_sistema,
+            activo: true
+          }, { onConflict: 'codigo' })
+          .select()
+          .single();
+
+        if (!error && data) return data;
+      } catch (err) {}
+    }
 
     try {
       const { rows } = await query(`
@@ -101,6 +135,25 @@ export const CatalogsRepository = {
    * Actualiza datos de una falla existente
    */
   async updateFault(codigo, { categoria, label, descripcion, activo }) {
+    if (supabase) {
+      try {
+        const updatePayload = {};
+        if (categoria) updatePayload.categoria = categoria.toUpperCase();
+        if (label) updatePayload.label = label.trim();
+        if (descripcion !== undefined) updatePayload.descripcion = descripcion.trim();
+        if (activo !== undefined) updatePayload.activo = activo;
+
+        const { data, error } = await supabase
+          .from('catalogo_fallas_placa')
+          .update(updatePayload)
+          .eq('codigo', codigo)
+          .select()
+          .maybeSingle();
+
+        if (!error && data) return data;
+      } catch (err) {}
+    }
+
     try {
       const { rows } = await query(`
         UPDATE catalogo_fallas_placa
@@ -136,6 +189,20 @@ export const CatalogsRepository = {
    * Obtiene el catálogo de accesorios de recepción
    */
   async getAccessories({ includeInactive = false } = {}) {
+    if (supabase) {
+      try {
+        let q = supabase
+          .from('catalogo_accesorios_recepcion')
+          .select('id, nombre, repuesto_sugerido_defecto, es_sistema, orden_visual, activo, creado_en')
+          .order('orden_visual', { ascending: true })
+          .order('nombre', { ascending: true });
+
+        if (!includeInactive) q = q.eq('activo', true);
+        const { data, error } = await q;
+        if (!error && data && data.length > 0) return data;
+      } catch (err) {}
+    }
+
     try {
       const where = includeInactive ? '' : 'WHERE activo = true';
       const { rows } = await query(`
@@ -154,6 +221,24 @@ export const CatalogsRepository = {
    * Registra un nuevo accesorio en el catálogo
    */
   async createAccessory({ nombre, repuesto_sugerido_defecto = '', es_sistema = false, orden_visual = 100 }) {
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('catalogo_accesorios_recepcion')
+          .upsert({
+            nombre: nombre.trim(),
+            repuesto_sugerido_defecto: repuesto_sugerido_defecto?.trim() || null,
+            es_sistema,
+            orden_visual,
+            activo: true
+          }, { onConflict: 'nombre' })
+          .select()
+          .single();
+
+        if (!error && data) return data;
+      } catch (err) {}
+    }
+
     try {
       const { rows } = await query(`
         INSERT INTO catalogo_accesorios_recepcion (nombre, repuesto_sugerido_defecto, es_sistema, orden_visual, activo)
@@ -183,6 +268,25 @@ export const CatalogsRepository = {
    * Actualiza datos de un accesorio
    */
   async updateAccessory(id, { nombre, repuesto_sugerido_defecto, orden_visual, activo }) {
+    if (supabase) {
+      try {
+        const updatePayload = {};
+        if (nombre) updatePayload.nombre = nombre.trim();
+        if (repuesto_sugerido_defecto !== undefined) updatePayload.repuesto_sugerido_defecto = repuesto_sugerido_defecto?.trim() || null;
+        if (orden_visual !== undefined) updatePayload.orden_visual = Number(orden_visual);
+        if (activo !== undefined) updatePayload.activo = activo;
+
+        const { data, error } = await supabase
+          .from('catalogo_accesorios_recepcion')
+          .update(updatePayload)
+          .eq('id', id)
+          .select()
+          .maybeSingle();
+
+        if (!error && data) return data;
+      } catch (err) {}
+    }
+
     try {
       const { rows } = await query(`
         UPDATE catalogo_accesorios_recepcion
@@ -214,3 +318,4 @@ export const CatalogsRepository = {
     }
   }
 };
+

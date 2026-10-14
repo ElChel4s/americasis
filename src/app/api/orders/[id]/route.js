@@ -21,10 +21,16 @@ export async function PUT(request, { params }) {
     const id = resolvedParams?.id;
     const body = await request.json();
 
-    // Si viene una acción de diagnóstico específica
+    // 1. Si viene una acción de diagnóstico específica de equipo
     if (body.equipoId && body.diagnosis) {
       const result = await OrdersService.saveDiagnosis(id, body.equipoId, body.diagnosis, user);
       return successResponse(result, 'Diagnóstico actualizado exitosamente');
+    }
+
+    // 2. Si viene actualización de estado general, presupuesto o condiciones
+    if (body.estado || body.status || body.condiciones || body.sumatoria_total !== undefined || body.moneda) {
+      const result = await OrdersService.updateOrderGeneral(id, body, user);
+      return successResponse(result, 'Orden actualizada exitosamente');
     }
 
     return errorResponse('Acción o cuerpo no soportado', 400);
@@ -33,3 +39,4 @@ export async function PUT(request, { params }) {
     return errorResponse(error.message || 'Error al actualizar la orden', 500);
   }
 }
+

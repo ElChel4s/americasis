@@ -19,6 +19,7 @@ import {
   Loader2 
 } from 'lucide-react';
 import QrMobileModal from '@/components/modals/QrMobileModal';
+import ImageCropModal from '@/components/modals/ImageCropModal';
 
 // Lista de los 10 accesorios estándar requeridos
 const ACCESORIOS_DEFAULT = [
@@ -183,6 +184,32 @@ export default function Step2Diagnosis({
   const [showQrModal, setShowQrModal] = useState(false);
   const [imagenesInternas, setImagenesInternas] = useState(equipo.imagenesInternas || []);
   const [isOptimizing, setIsOptimizing] = useState(false);
+  const [cropModalOpen, setCropModalOpen] = useState(false);
+  const [cropImageSrc, setCropImageSrc] = useState(null);
+
+  const handleCropComplete = async (croppedBlob) => {
+    setCropModalOpen(false);
+    try {
+      setIsOptimizing(true);
+      const { compressImage } = await import('@/lib/utils/imageCompressor');
+      const rawFile = new File([croppedBlob], `diag-${Date.now()}.webp`, { type: 'image/webp' });
+      const optimizedFile = await compressImage(rawFile, {
+        maxWidth: 1200,
+        maxHeight: 1200,
+        quality: 0.80,
+        returnType: 'file'
+      });
+      const url = URL.createObjectURL(optimizedFile);
+      setImagenesInternas((prev) => [
+        ...prev,
+        { url, name: optimizedFile.name, file: optimizedFile, etapa: 'DIAGNOSTICO' }
+      ]);
+    } catch (err) {
+      console.error('Error procesando imagen recortada en diagnóstico:', err);
+    } finally {
+      setIsOptimizing(false);
+    }
+  };
 
   // 5. Dictado por Voz y Redacción Oficial
   const [textoDiagnostico, setTextoDiagnostico] = useState(equipo.texto_diagnostico || '');
@@ -830,6 +857,15 @@ export default function Step2Diagnosis({
               onChange={async (e) => {
                 const files = e.target.files;
                 if (!files || files.length === 0) return;
+
+                if (files.length === 1) {
+                  const rawUrl = URL.createObjectURL(files[0]);
+                  setCropImageSrc(rawUrl);
+                  setCropModalOpen(true);
+                  e.target.value = '';
+                  return;
+                }
+
                 setIsOptimizing(true);
                 try {
                   const { compressImage } = await import('@/lib/utils/imageCompressor');
@@ -1069,6 +1105,14 @@ export default function Step2Diagnosis({
         ordenId={equipo.orden_id || '1'}
         equipoId={equipo.id}
         equipoNombre={`${equipo.marca || 'Radio'} ${equipo.modelo || ''} (S/N: ${equipo.numero_serie || 'Pendiente'})`}
+      />
+
+      {/* Herramienta de Recorte y Rotación estilo WhatsApp */}
+      <ImageCropModal
+        isOpen={cropModalOpen}
+        imageSrc={cropImageSrc}
+        onCropComplete={handleCropComplete}
+        onClose={() => setCropModalOpen(false)}
       />
     </div>
   );

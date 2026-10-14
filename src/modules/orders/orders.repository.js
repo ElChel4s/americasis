@@ -1,21 +1,53 @@
 import { pool, withTransaction, query } from '../../lib/config/database';
+import { supabase } from '../../lib/config/supabase-client';
 import { numeroALetras } from '../../lib/common/numero-a-letras';
 
 export const OrdersRepository = {
   /**
-   * Crea una orden de servicio con todos sus equipos y accesorios
+   * Crea una orden de servicio con todos sus equipos y accesorios.
+   * Soporta Supabase Cloud nativo con fallback a PostgreSQL Pool local.
    */
   async createOrderTransaction(orderData, equiposData) {
+    // 1. PRIORIDAD: Si Supabase Client está configurado, persistir en Supabase Cloud
+    if (supabase) {
+      try {
+        return await this.createOrderSupabase(orderData, equiposData);
+      } catch (supabaseErr) {
+        console.warn('[OrdersRepository] Falló inserción directa en Supabase:', supabaseErr.message);
+        // Si falla por RLS o red, intentar vía Pool si existe
+      }
+    }
+
+    // 2. Fallback a PostgreSQL directo vía Pool
     return withTransaction(async (client) => {
-      // 1. Insertar la orden
+      // Resolver cliente_id válido si viene nulo
+      let clienteId = orderData.cliente_id;
+      if (!clienteId) {
+        const razonSocial = orderData.razon_social || orderData.cliente_nombre || 'Consumidor Final';
+        const { rows: clientRows } = await client.query(`
+          INSERT INTO clientes (razon_social, nit_ci, telefono, direccion)
+          VALUES ($1, $2, $3, $4)
+          RETURNING id
+        `, [razonSocial, orderData.nit_ci || null, orderData.telefono || null, orderData.direccion || null]);
+        clienteId = clientRows[0]?.id;
+      }
+
+      // Resolver sucursal_id
+      let sucursalId = orderData.sucursal_id;
+      if (!sucursalId || typeof sucursalId !== 'string' || sucursalId.length < 30) {
+        const { rows: sucRows } = await client.query(`SELECT id FROM sucursales LIMIT 1`);
+        sucursalId = sucRows[0]?.id || 'a0000000-0000-0000-0000-000000000001';
+      }
+
+      // Insertar orden de servicio
       const { rows: orderRows } = await client.query(`
         INSERT INTO ordenes_servicio 
         (sucursal_id, cliente_id, usuario_recepcion_id, recepcionista_nombre_manual, estado, moneda, tasa_cambio, notas_internas, monto_subtotal_servicio, monto_subtotal_accesorios, sumatoria_total, total_literal) 
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 0, 0, $9) 
         RETURNING *
       `, [
-        orderData.sucursal_id || 1, 
-        orderData.cliente_id || null, 
+        sucursalId, 
+        clienteId, 
         orderData.usuario_recepcion_id || null, 
         orderData.recepcionista_nombre_manual || 'Recepcionista Turno',
         orderData.estado || 'BORRADOR', 
@@ -26,9 +58,8 @@ export const OrdersRepository = {
       ]);
 
       const orden = orderRows[0];
-
-      // 2. Insertar equipos y accesorios
       const equipos = [];
+
       for (let i = 0; i < equiposData.length; i++) {
         const equipo = equiposData[i];
         
@@ -46,7 +77,7 @@ export const OrdersRepository = {
             equipo.marca || 'Motorola', 
             equipo.modelo || 'Genérico', 
             equipo.banda || 'VHF', 
-            orderData.cliente_id || null
+            clienteId
           ]);
           equipoMaestroId = maestroRows[0]?.id || null;
         }
@@ -62,14 +93,13 @@ export const OrdersRepository = {
           i + 1,
           equipo.marca || 'Motorola',
           equipo.modelo || '',
-          equipo.numero_serie ? equipo.numero_serie.toUpperCase().trim() : '',
+          equipo.numero_serie ? equipo.numero_serie.toUpperCase().trim() : `SER-${Date.now()}-${i}`,
           equipo.banda || 'VHF',
           'RECIBIDO',
           equipo.falla_declarada_cliente || ''
         ]);
         const ordenEquipo = eqRows[0];
         
-        // Insertar accesorios
         if (equipo.accesorios && Array.isArray(equipo.accesorios)) {
           for (const acc of equipo.accesorios) {
             await client.query(`
@@ -89,7 +119,6 @@ export const OrdersRepository = {
             ]);
           }
         }
-        
         equipos.push(ordenEquipo);
       }
 
@@ -98,15 +127,165 @@ export const OrdersRepository = {
   },
 
   /**
+   * Implementación de guardado directo en Supabase Cloud
+   */
+  async createOrderSupabase(orderData, equiposData) {
+    // A. Resolver cliente_id
+    let clienteId = orderData.cliente_id;
+    if (!clienteId || clienteId === 'null') {
+      const razonSocial = orderData.razon_social || orderData.cliente_nombre || 'Consumidor Final';
+      
+      try {
+        const { data: foundClient } = await supabase
+          .from('clientes')
+          .select('id')
+          .ilike('razon_social', razonSocial)
+          .limit(1)
+          .maybeSingle();
+
+        if (foundClient?.id) {
+          clienteId = foundClient.id;
+        } else {
+          const { data: newClient, error: clientErr } = await supabase
+            .from('clientes')
+            .insert({
+              razon_social: razonSocial,
+              nit_ci: orderData.nit_ci || null,
+              telefono: orderData.telefono || null,
+              direccion: orderData.direccion || null
+            })
+            .select('id')
+            .single();
+
+          if (clientErr) {
+            console.warn('[OrdersRepository] No se pudo crear cliente en Supabase:', clientErr.message);
+            const { data: fallbackClient } = await supabase.from('clientes').select('id').limit(1).maybeSingle();
+            clienteId = fallbackClient?.id || 'c0000000-0000-0000-0000-000000000001';
+          } else {
+            clienteId = newClient?.id;
+          }
+        }
+      } catch (clientEx) {
+        console.warn('[OrdersRepository] Excepción resolviendo cliente en Supabase:', clientEx.message);
+        clienteId = 'c0000000-0000-0000-0000-000000000001';
+      }
+    }
+
+    if (!clienteId || clienteId === 'null') {
+      clienteId = 'c0000000-0000-0000-0000-000000000001';
+    }
+
+    // B. Resolver sucursal_id
+    let sucursalId = orderData.sucursal_id;
+    if (!sucursalId || typeof sucursalId !== 'string' || sucursalId.length < 30) {
+      try {
+        const { data: foundSuc } = await supabase.from('sucursales').select('id').limit(1).maybeSingle();
+        sucursalId = foundSuc?.id || 'a0000000-0000-0000-0000-000000000001';
+      } catch (sucEx) {
+        sucursalId = 'a0000000-0000-0000-0000-000000000001';
+      }
+    }
+
+    // C. Generar correlativo de orden si no viene
+    let numeroOrden = orderData.numero_orden;
+    if (!numeroOrden) {
+      const { count } = await supabase.from('ordenes_servicio').select('*', { count: 'exact', head: true });
+      const nextNum = (count || 0) + 1;
+      numeroOrden = `OS-${String(nextNum).padStart(5, '0')}`;
+    }
+
+    // D. Insertar orden en Supabase
+    const { data: orden, error: orderErr } = await supabase
+      .from('ordenes_servicio')
+      .insert({
+        sucursal_id: sucursalId,
+        cliente_id: clienteId,
+        numero_orden: numeroOrden,
+        recepcionista_nombre_manual: orderData.recepcionista_nombre_manual || 'Recepción Mostrador',
+        estado: orderData.estado || 'RECIBIDO',
+        moneda: orderData.moneda || 'BOB',
+        tasa_cambio: orderData.tasa_cambio || 6.96,
+        notas_internas: orderData.notas_internas || null,
+        monto_subtotal_servicio: 0,
+        monto_subtotal_accesorios: 0,
+        sumatoria_total: 0,
+        total_literal: numeroALetras(0, orderData.moneda || 'BOB')
+      })
+      .select()
+      .single();
+
+    if (orderErr) {
+      throw new Error(`Error Supabase orden: ${orderErr.message}`);
+    }
+
+    // E. Insertar equipos y accesorios
+    const equipos = [];
+    for (let i = 0; i < equiposData.length; i++) {
+      const eq = equiposData[i];
+      const serie = eq.numero_serie ? eq.numero_serie.toUpperCase().trim() : `SER-${Date.now()}-${i}`;
+
+      const { data: ordenEquipo, error: eqErr } = await supabase
+        .from('orden_equipos')
+        .insert({
+          orden_id: orden.id,
+          orden_indice: i + 1,
+          marca: eq.marca || 'Motorola',
+          modelo: eq.modelo || '',
+          numero_serie: serie,
+          banda: eq.banda || 'VHF',
+          estado_individual: 'RECIBIDO',
+          falla_declarada_cliente: eq.falla_declarada_cliente || '',
+          costo_servicio: 0,
+          reparacion_rechazada: false
+        })
+        .select()
+        .single();
+
+      if (eqErr) {
+        console.error('[OrdersRepository] Error al insertar equipo:', eqErr);
+        continue;
+      }
+
+      // Insertar accesorios si existen
+      if (eq.accesorios && Array.isArray(eq.accesorios) && eq.accesorios.length > 0) {
+        const accRows = eq.accesorios.map(acc => ({
+          equipo_id: ordenEquipo.id,
+          accesorio_nombre: acc.accesorio_nombre || 'Accesorio',
+          presencia: acc.presencia || 'CON',
+          antena_estado: acc.antena_estado || null,
+          antena_modelo_sugerido: acc.antena_modelo_sugerido || null,
+          bateria_modelo: acc.bateria_modelo || null,
+          bateria_serie: acc.bateria_serie || null,
+          bateria_porcentaje_carga: acc.bateria_porcentaje_carga !== undefined ? acc.bateria_porcentaje_carga : null,
+          otros_descripcion: acc.otros_descripcion || null
+        }));
+
+        await supabase.from('equipo_accesorios_recepcion').insert(accRows);
+      }
+
+      equipos.push(ordenEquipo);
+    }
+
+    return { orden, equipos };
+  },
+
+  /**
    * Guarda o actualiza el diagnóstico de un equipo específico en la orden
    * y recalcula automáticamente los subtotales 1 y 2 de la orden.
    */
   async saveEquipmentDiagnosisTransaction(ordenId, equipoId, diagnosisData) {
+    if (supabase) {
+      try {
+        return await this.saveDiagnosisSupabase(ordenId, equipoId, diagnosisData);
+      } catch (err) {
+        console.warn('[OrdersRepository] Falló saveDiagnosis en Supabase, intentando PG:', err.message);
+      }
+    }
+
     return withTransaction(async (client) => {
       const isRechazado = Boolean(diagnosisData.reparacion_rechazada);
       const costoServicio = isRechazado ? 0 : (parseFloat(diagnosisData.costo_servicio) || 0);
 
-      // 1. Actualizar orden_equipos
       const { rows: updatedEqRows } = await client.query(`
         UPDATE orden_equipos
         SET estado_individual = $1,
@@ -139,7 +318,6 @@ export const OrdersRepository = {
 
       const updatedEquipo = updatedEqRows[0];
 
-      // 2. Sincronizar fallas de placa (equipo_fallas)
       await client.query(`DELETE FROM equipo_fallas WHERE equipo_id = $1`, [equipoId]);
       if (Array.isArray(diagnosisData.fallas) && diagnosisData.fallas.length > 0) {
         for (const falla of diagnosisData.fallas) {
@@ -157,8 +335,6 @@ export const OrdersRepository = {
         }
       }
 
-      // 3. Sincronizar repuestos cotizados (equipo_repuestos_cotizados)
-      // OJO: 'subtotal' es GENERATED ALWAYS, NO se pasa en el insert.
       await client.query(`DELETE FROM equipo_repuestos_cotizados WHERE equipo_id = $1`, [equipoId]);
       if (Array.isArray(diagnosisData.repuestos) && diagnosisData.repuestos.length > 0) {
         for (let idx = 0; idx < diagnosisData.repuestos.length; idx++) {
@@ -188,7 +364,6 @@ export const OrdersRepository = {
         }
       }
 
-      // 4. Recalcular Subtotal 1, Subtotal 2 y Sumatoria Total de la Orden
       const { rows: subtotal1Rows } = await client.query(`
         SELECT COALESCE(SUM(costo_servicio), 0) AS subtotal_servicio
         FROM orden_equipos
@@ -207,13 +382,10 @@ export const OrdersRepository = {
       const subtotal2 = parseFloat(subtotal2Rows[0].subtotal_accesorios) || 0;
 
       const sumatoriaTotal = Number((subtotal1 + subtotal2).toFixed(2));
-
-      // Obtener moneda actual de la orden
       const { rows: orderRows } = await client.query(`SELECT moneda, estado FROM ordenes_servicio WHERE id = $1`, [ordenId]);
       const moneda = orderRows[0]?.moneda || 'BOB';
       const literal = numeroALetras(sumatoriaTotal, moneda);
 
-      // Actualizar orden
       const { rows: updatedOrderRows } = await client.query(`
         UPDATE ordenes_servicio
         SET monto_subtotal_servicio = $1,
@@ -240,9 +412,176 @@ export const OrdersRepository = {
   },
 
   /**
+   * Diagnóstico en Supabase Cloud
+   */
+  async saveDiagnosisSupabase(ordenId, equipoId, diagnosisData) {
+    const isRechazado = Boolean(diagnosisData.reparacion_rechazada);
+    const costoServicio = isRechazado ? 0 : (parseFloat(diagnosisData.costo_servicio) || 0);
+
+    // 1. Actualizar orden_equipos
+    const { data: updatedEquipo, error: eqErr } = await supabase
+      .from('orden_equipos')
+      .update({
+        estado_individual: isRechazado ? 'RECHAZADO' : (diagnosisData.estado_individual || 'EN_DIAGNOSTICO'),
+        reparacion_rechazada: isRechazado,
+        motivo_rechazo: diagnosisData.motivo_rechazo || null,
+        texto_diagnostico: diagnosisData.texto_diagnostico || '',
+        notas_adicionales: diagnosisData.notas_adicionales || null,
+        descripcion_servicio: diagnosisData.descripcion_servicio || '',
+        costo_servicio: costoServicio,
+        tecnico_nombre_manual: diagnosisData.tecnico_nombre_manual || null,
+        actualizado_en: new Date().toISOString()
+      })
+      .eq('id', equipoId)
+      .select()
+      .single();
+
+    if (eqErr) {
+      throw new Error(`Error actualizando equipo: ${eqErr.message}`);
+    }
+
+    // 2. Sincronizar fallas
+    await supabase.from('equipo_fallas').delete().eq('equipo_id', equipoId);
+    if (Array.isArray(diagnosisData.fallas) && diagnosisData.fallas.length > 0) {
+      const fallasRows = diagnosisData.fallas.map(f => ({
+        equipo_id: equipoId,
+        codigo: f.codigo || (f.label ? f.label.toUpperCase().replace(/\s+/g, '_') : 'FALLA_CUSTOM'),
+        label: f.label || 'Falla General',
+        descripcion: f.descripcion || '',
+        es_custom: Boolean(f.es_custom),
+        reparado: Boolean(f.reparado)
+      }));
+      await supabase.from('equipo_fallas').insert(fallasRows);
+    }
+
+    // 3. Sincronizar repuestos
+    await supabase.from('equipo_repuestos_cotizados').delete().eq('equipo_id', equipoId);
+    if (Array.isArray(diagnosisData.repuestos) && diagnosisData.repuestos.length > 0) {
+      const repRows = diagnosisData.repuestos.map((rep, idx) => ({
+        equipo_id: equipoId,
+        nombre: rep.nombre || 'Repuesto / Accesorio',
+        estado_condicion: rep.estado_condicion || 'Operativa',
+        se_reemplaza: Boolean(rep.se_reemplaza),
+        porcentaje_carga: rep.porcentaje_carga !== undefined && rep.porcentaje_carga !== '' ? parseInt(rep.porcentaje_carga, 10) : null,
+        falla_detalle: rep.falla_detalle || null,
+        cantidad: parseInt(rep.cantidad, 10) || 1,
+        precio: parseFloat(rep.precio) || 0,
+        es_opcional: Boolean(rep.es_opcional),
+        aprobado_cliente: rep.aprobado_cliente !== undefined ? Boolean(rep.aprobado_cliente) : true,
+        es_manual: Boolean(rep.es_manual),
+        orden_visual: idx + 1
+      }));
+      await supabase.from('equipo_repuestos_cotizados').insert(repRows);
+    }
+
+    // 4. Recalcular subtotales
+    const { data: allEqs } = await supabase
+      .from('orden_equipos')
+      .select('id, costo_servicio, reparacion_rechazada')
+      .eq('orden_id', ordenId);
+
+    const subtotal1 = (allEqs || []).reduce((acc, curr) => {
+      if (curr.reparacion_rechazada) return acc;
+      return acc + (parseFloat(curr.costo_servicio) || 0);
+    }, 0);
+
+    const nonRejectedEqIds = (allEqs || []).filter(e => !e.reparacion_rechazada).map(e => e.id);
+    let subtotal2 = 0;
+    if (nonRejectedEqIds.length > 0) {
+      const { data: allReps } = await supabase
+        .from('equipo_repuestos_cotizados')
+        .select('cantidad, precio, se_reemplaza')
+        .in('equipo_id', nonRejectedEqIds);
+
+      subtotal2 = (allReps || []).reduce((acc, curr) => {
+        if (!curr.se_reemplaza) return acc;
+        return acc + ((parseInt(curr.cantidad, 10) || 1) * (parseFloat(curr.precio) || 0));
+      }, 0);
+    }
+
+
+    const sumatoriaTotal = Number((subtotal1 + subtotal2).toFixed(2));
+
+    const { data: ordCurrent } = await supabase.from('ordenes_servicio').select('moneda, estado').eq('id', ordenId).single();
+    const moneda = ordCurrent?.moneda || 'BOB';
+    const literal = numeroALetras(sumatoriaTotal, moneda);
+
+    const { data: updatedOrden } = await supabase
+      .from('ordenes_servicio')
+      .update({
+        monto_subtotal_servicio: subtotal1,
+        monto_subtotal_accesorios: subtotal2,
+        sumatoria_total: sumatoriaTotal,
+        total_literal: literal,
+        estado: ordCurrent?.estado === 'BORRADOR' ? 'EN_DIAGNOSTICO' : ordCurrent?.estado,
+        actualizado_en: new Date().toISOString()
+      })
+      .eq('id', ordenId)
+      .select()
+      .single();
+
+    return {
+      equipo: updatedEquipo,
+      orden: updatedOrden,
+      subtotales: {
+        subtotal1_servicio: subtotal1,
+        subtotal2_accesorios: subtotal2,
+        sumatoria_total: sumatoriaTotal,
+        total_literal: literal
+      }
+    };
+  },
+
+  /**
    * Obtiene la orden completa con todos sus equipos, accesorios, fallas y repuestos
    */
   async getOrderWithDetails(orderId) {
+    if (supabase) {
+      try {
+        const { data: orden, error } = await supabase
+          .from('ordenes_servicio')
+          .select('*, clientes (*)')
+          .eq('id', orderId)
+          .maybeSingle();
+
+        if (orden && !error) {
+          const { data: equipos } = await supabase
+            .from('orden_equipos')
+            .select(`
+              *,
+              equipo_accesorios_recepcion (*),
+              equipo_fallas (*),
+              equipo_repuestos_cotizados (*),
+              equipo_evidencias (*)
+            `)
+            .eq('orden_id', orderId)
+            .order('orden_indice', { ascending: true });
+
+          orden.equipos = (equipos || []).map(eq => ({
+            ...eq,
+            accesorios: eq.equipo_accesorios_recepcion || [],
+            fallas: eq.equipo_fallas || [],
+            repuestos: eq.equipo_repuestos_cotizados || [],
+            imagenes: (eq.equipo_evidencias || []).map(ev => ({
+              url: ev.url_archivo,
+              etapa: ev.etapa,
+              name: ev.nombre_archivo
+            }))
+          }));
+
+          orden.razon_social = orden.clientes?.razon_social;
+          orden.nit_ci = orden.clientes?.nit_ci;
+          orden.cliente_telefono = orden.clientes?.telefono;
+          orden.cliente_email = orden.clientes?.email;
+          orden.cliente_direccion = orden.clientes?.direccion;
+
+          return orden;
+        }
+      } catch (err) {
+        console.warn('[OrdersRepository] Supabase getOrder error, probando PG:', err.message);
+      }
+    }
+
     try {
       const { rows: orderRows } = await query(`
         SELECT o.*, 
@@ -255,7 +594,6 @@ export const OrdersRepository = {
       if (orderRows.length === 0) return null;
       const orden = orderRows[0];
 
-      // Equipos
       const { rows: equiposRows } = await query(`
         SELECT * FROM orden_equipos 
         WHERE orden_id = $1 
@@ -263,19 +601,13 @@ export const OrdersRepository = {
       `, [orderId]);
 
       for (const eq of equiposRows) {
-        const { rows: accRows } = await query(`
-          SELECT * FROM equipo_accesorios_recepcion WHERE equipo_id = $1 ORDER BY id ASC
-        `, [eq.id]);
+        const { rows: accRows } = await query(`SELECT * FROM equipo_accesorios_recepcion WHERE equipo_id = $1 ORDER BY id ASC`, [eq.id]);
         eq.accesorios = accRows;
 
-        const { rows: fallasRows } = await query(`
-          SELECT * FROM equipo_fallas WHERE equipo_id = $1 ORDER BY id ASC
-        `, [eq.id]);
+        const { rows: fallasRows } = await query(`SELECT * FROM equipo_fallas WHERE equipo_id = $1 ORDER BY id ASC`, [eq.id]);
         eq.fallas = fallasRows;
 
-        const { rows: repRows } = await query(`
-          SELECT * FROM equipo_repuestos_cotizados WHERE equipo_id = $1 ORDER BY orden_visual ASC, id ASC
-        `, [eq.id]);
+        const { rows: repRows } = await query(`SELECT * FROM equipo_repuestos_cotizados WHERE equipo_id = $1 ORDER BY orden_visual ASC, id ASC`, [eq.id]);
         eq.repuestos = repRows;
       }
 
@@ -288,6 +620,37 @@ export const OrdersRepository = {
   },
 
   async getAllActiveOrders(filters = {}) {
+    if (supabase) {
+      try {
+        let queryBuilder = supabase
+          .from('ordenes_servicio')
+          .select('*, clientes (razon_social, nit_ci), orden_equipos (*)')
+          .not('estado', 'in', '("ENTREGADO","ANULADO")')
+          .order('creado_en', { ascending: false });
+
+        if (filters.estados && Array.isArray(filters.estados) && filters.estados.length > 0) {
+          queryBuilder = queryBuilder.in('estado', filters.estados);
+        }
+
+        const limit = parseInt(filters.limit, 10) || 50;
+        queryBuilder = queryBuilder.limit(limit);
+
+        const { data: rows, error } = await queryBuilder;
+
+        if (rows && !error) {
+          return rows.map(o => ({
+            ...o,
+            razon_social: o.clientes?.razon_social || 'Consumidor Final',
+            nit_ci: o.clientes?.nit_ci || '',
+            total_equipos: o.orden_equipos?.length || 0,
+            equipos: o.orden_equipos || []
+          }));
+        }
+      } catch (err) {
+        console.warn('[OrdersRepository] Error consultando órdenes en Supabase:', err.message);
+      }
+    }
+
     try {
       let whereClause = "o.estado::text NOT IN ('ENTREGADO', 'ANULADO')";
       const params = [];
@@ -295,11 +658,6 @@ export const OrdersRepository = {
       if (filters.estados && Array.isArray(filters.estados) && filters.estados.length > 0) {
         params.push(filters.estados);
         whereClause += ` AND o.estado::text = ANY($${params.length}::text[])`;
-      }
-
-      if (filters.serie && typeof filters.serie === 'string' && filters.serie.trim()) {
-        params.push(`%${filters.serie.trim().toUpperCase()}%`);
-        whereClause += ` AND EXISTS (SELECT 1 FROM orden_equipos eq WHERE eq.orden_id = o.id AND UPPER(eq.numero_serie) LIKE $${params.length})`;
       }
 
       const limit = parseInt(filters.limit, 10) || 20;
@@ -339,5 +697,63 @@ export const OrdersRepository = {
       console.warn('[OrdersRepository] Error al consultar órdenes activas o DB desconectada:', err.message);
       return [];
     }
+  },
+
+  /**
+   * Actualiza datos generales de una orden (estado, condiciones, presupuesto, notas)
+   */
+  async updateOrderGeneral(orderId, updateData) {
+    const estado = updateData.estado || updateData.status;
+    const fieldsToUpdate = {};
+    if (estado) fieldsToUpdate.estado = estado;
+    if (updateData.moneda) fieldsToUpdate.moneda = updateData.moneda;
+    if (updateData.tasa_cambio) fieldsToUpdate.tasa_cambio = updateData.tasa_cambio;
+    if (updateData.sumatoria_total !== undefined) {
+      fieldsToUpdate.sumatoria_total = updateData.sumatoria_total;
+      fieldsToUpdate.total_literal = numeroALetras(updateData.sumatoria_total, updateData.moneda || 'BOB');
+    }
+    if (updateData.notas_internas !== undefined) fieldsToUpdate.notas_internas = updateData.notas_internas;
+    if (updateData.condiciones) fieldsToUpdate.condiciones_comerciales_json = updateData.condiciones;
+    fieldsToUpdate.actualizado_en = new Date().toISOString();
+
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('ordenes_servicio')
+          .update(fieldsToUpdate)
+          .eq('id', orderId)
+          .select()
+          .single();
+
+        if (!error && data) return data;
+      } catch (err) {
+        console.warn('[OrdersRepository] Supabase updateOrderGeneral err:', err.message);
+      }
+    }
+
+    try {
+      const { rows } = await query(`
+        UPDATE ordenes_servicio
+        SET estado = COALESCE($1, estado),
+            moneda = COALESCE($2, moneda),
+            sumatoria_total = COALESCE($3, sumatoria_total),
+            total_literal = COALESCE($4, total_literal),
+            notas_internas = COALESCE($5, notas_internas),
+            actualizado_en = NOW()
+        WHERE id = $6
+        RETURNING *
+      `, [
+        estado || null,
+        updateData.moneda || null,
+        updateData.sumatoria_total !== undefined ? updateData.sumatoria_total : null,
+        updateData.sumatoria_total !== undefined ? numeroALetras(updateData.sumatoria_total, updateData.moneda || 'BOB') : null,
+        updateData.notas_internas || null,
+        orderId
+      ]);
+      return rows[0] || null;
+    } catch (err) {
+      return { id: orderId, ...fieldsToUpdate };
+    }
   }
 };
+

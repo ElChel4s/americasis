@@ -3,6 +3,7 @@
 import React, { useState, useRef } from 'react';
 import { User, ScanLine, Settings2, Camera, Upload, ImagePlus, X, Aperture, Plus, Radio, Trash2 } from 'lucide-react';
 import QrMobileModal from '@/components/modals/QrMobileModal';
+import ImageCropModal from '@/components/modals/ImageCropModal';
 import EquipmentTabs from '@/components/orders/EquipmentTabs';
 
 const MARCAS_RADIO = ['Motorola', 'Vertex Standard', 'Yaesu', 'Kenwood', 'Icom', 'Hytera', 'Baofeng', 'Otro'];
@@ -71,9 +72,19 @@ export default function Step1Reception({
   };
 
   const [isOptimizing, setIsOptimizing] = useState(false);
+  const [cropModalOpen, setCropModalOpen] = useState(false);
+  const [cropImageSrc, setCropImageSrc] = useState(null);
 
   const handleImageSelect = async (files) => {
     if (!files || files.length === 0) return;
+
+    // Si es una sola foto (ej. tomada con la cámara), abrir herramienta de recorte tipo WhatsApp
+    if (files.length === 1) {
+      const rawUrl = URL.createObjectURL(files[0]);
+      setCropImageSrc(rawUrl);
+      setCropModalOpen(true);
+      return;
+    }
     
     setIsOptimizing(true);
     try {
@@ -99,6 +110,30 @@ export default function Step1Reception({
     } catch (err) {
       console.error('Error optimizando imágenes en Step 1:', err);
       alert('Hubo un error al optimizar las imágenes.');
+    } finally {
+      setIsOptimizing(false);
+    }
+  };
+
+  const handleCropComplete = async (croppedBlob, croppedUrl) => {
+    setCropModalOpen(false);
+    try {
+      setIsOptimizing(true);
+      const { compressImage } = await import('@/lib/utils/imageCompressor');
+      const rawFile = new File([croppedBlob], `recepcion-${Date.now()}.webp`, { type: 'image/webp' });
+      const optimizedFile = await compressImage(rawFile, {
+        maxWidth: 1200,
+        maxHeight: 1200,
+        quality: 0.80,
+        returnType: 'file'
+      });
+      const url = URL.createObjectURL(optimizedFile);
+      const currentImages = equipo.imagenes || [];
+      updateEquipo(activeEquipoIndex, {
+        imagenes: [...currentImages, { url, name: optimizedFile.name, file: optimizedFile, etapa: 'RECEPCION' }]
+      });
+    } catch (err) {
+      console.error('Error procesando imagen recortada:', err);
     } finally {
       setIsOptimizing(false);
     }
@@ -639,6 +674,12 @@ export default function Step1Reception({
             e.target.value = '';
           }
         }}
+      />
+      <ImageCropModal
+        isOpen={cropModalOpen}
+        imageSrc={cropImageSrc}
+        onCropComplete={handleCropComplete}
+        onClose={() => setCropModalOpen(false)}
       />
     </div>
   );

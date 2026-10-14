@@ -1,4 +1,5 @@
 import { query } from '../config/database';
+import { supabase } from '../config/supabase-client';
 
 /**
  * Registra una acción en la tabla auditoria_logs
@@ -15,6 +16,29 @@ export const logAudit = async ({
   detalleCambio = null,
   ipOrigen = null
 }) => {
+  if (supabase) {
+    try {
+      const payload = {
+        usuario_id: usuarioId,
+        usuario_nombre: usuarioNombre,
+        usuario_rol: usuarioRol,
+        accion,
+        estado_anterior: estadoAnterior,
+        estado_nuevo: estadoNuevo,
+        detalle_cambio: detalleCambio,
+        ip_origen: ipOrigen
+      };
+      if (ordenId && typeof ordenId === 'string' && ordenId.length > 20) {
+        payload.orden_id = ordenId;
+      }
+      if (equipoId && typeof equipoId === 'string' && equipoId.length > 20) {
+        payload.equipo_id = equipoId;
+      }
+      await supabase.from('auditoria_logs').insert(payload);
+      return;
+    } catch (sbErr) {}
+  }
+
   try {
     const text = `
       INSERT INTO auditoria_logs 
@@ -27,7 +51,7 @@ export const logAudit = async ({
     ];
     await query(text, values);
   } catch (error) {
-    console.error('Error guardando log de auditoría:', error);
-    // No lanzamos error para no interrumpir el flujo principal
+    // Silencioso para no interrumpir el flujo principal
   }
 };
+

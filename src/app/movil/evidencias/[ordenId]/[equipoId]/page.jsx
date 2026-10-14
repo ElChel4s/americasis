@@ -10,8 +10,10 @@ import {
   Image as ImageIcon, 
   RefreshCw,
   Radio,
-  ChevronLeft
+  ChevronLeft,
+  Crop
 } from 'lucide-react';
+import ImageCropModal from '@/components/modals/ImageCropModal';
 
 const ETAPAS = [
   { id: 'RECEPCION', label: 'Recepción', color: 'bg-amber-500' },
@@ -27,6 +29,8 @@ export default function MobileEvidencesPage() {
   const [etapa, setEtapa] = useState('DIAGNOSTICO');
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
+  const [rawImageSrc, setRawImageSrc] = useState(null);
+  const [cropModalOpen, setCropModalOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
@@ -58,34 +62,41 @@ export default function MobileEvidencesPage() {
 
   const [isOptimizing, setIsOptimizing] = useState(false);
 
-  // Manejo de captura de foto desde la cámara
-  const handleFileChange = async (e) => {
+  // Manejo de captura de foto desde la cámara: abre la herramienta de recorte estilo WhatsApp
+  const handleFileChange = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setIsOptimizing(true);
     setUploadSuccess(false);
     setErrorMessage(null);
 
+    const rawUrl = URL.createObjectURL(file);
+    setRawImageSrc(rawUrl);
+    setCropModalOpen(true);
+
+    // Feedback táctil en móviles
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate(40);
+    }
+  };
+
+  // Callback cuando el usuario confirma el recorte en la herramienta
+  const handleCropComplete = async (croppedBlob, croppedUrl) => {
     try {
-      const { compressImage } = await import('@/lib/utils/imageCompressor');
-      const optimizedFile = await compressImage(file, {
-        maxWidth: 1200,
-        maxHeight: 1200,
-        quality: 0.78,
-        returnType: 'file'
+      setIsOptimizing(true);
+      const croppedFile = new File([croppedBlob], `evidencia-${Date.now()}.webp`, {
+        type: 'image/webp',
       });
+      setSelectedFile(croppedFile);
+      setPreviewUrl(croppedUrl);
+      setCropModalOpen(false);
 
-      setSelectedFile(optimizedFile);
-      setPreviewUrl(URL.createObjectURL(optimizedFile));
-
-      // Feedback táctil en móviles
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
-        navigator.vibrate(50);
+        navigator.vibrate([40, 40]);
       }
     } catch (err) {
-      console.error('Error optimizando imagen:', err);
-      setErrorMessage('Error al optimizar la imagen');
+      console.error('Error al procesar foto recortada:', err);
+      setErrorMessage('Error al procesar foto recortada');
     } finally {
       setIsOptimizing(false);
     }
@@ -270,9 +281,18 @@ export default function MobileEvidencesPage() {
                 type="button"
                 onClick={cancelarCaptura}
                 disabled={isUploading}
-                className="flex-1 py-3 px-4 rounded-xl border border-border bg-muted/60 text-muted-foreground font-bold text-xs active:scale-95 transition-all"
+                className="py-3 px-3 rounded-xl border border-border bg-muted/60 text-muted-foreground font-bold text-xs active:scale-95 transition-all"
               >
                 Volver a Tomar
+              </button>
+              <button
+                type="button"
+                onClick={() => setCropModalOpen(true)}
+                disabled={isUploading}
+                className="py-3 px-3 rounded-xl border border-border bg-muted/60 text-foreground font-bold text-xs flex items-center justify-center gap-1.5 active:scale-95 transition-all"
+                title="Ajustar recorte estilo WhatsApp"
+              >
+                <Crop className="w-3.5 h-3.5 text-emerald-500" /> Recortar
               </button>
               <button
                 type="button"
@@ -338,6 +358,19 @@ export default function MobileEvidencesPage() {
           )}
         </div>
       </main>
+
+      {/* Herramienta de Recorte y Rotación estilo WhatsApp */}
+      <ImageCropModal
+        isOpen={cropModalOpen}
+        imageSrc={rawImageSrc}
+        onCropComplete={handleCropComplete}
+        onClose={() => {
+          setCropModalOpen(false);
+          if (!selectedFile && fileInputRef.current) {
+            fileInputRef.current.value = '';
+          }
+        }}
+      />
     </div>
   );
 }
