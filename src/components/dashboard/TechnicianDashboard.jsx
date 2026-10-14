@@ -42,9 +42,14 @@ export default function TechnicianDashboard() {
     };
   }, []);
 
-  // Lista de órdenes para el técnico: RECIBIDO o EN_DIAGNOSTICO
+  // Lista de órdenes para el técnico: RECIBIDO, PENDIENTE_DIAGNOSTICO o EN_DIAGNOSTICO
   const activeOrders = useMemo(() => {
-    return orders.filter(o => o.estado === 'RECIBIDO' || o.estado === 'EN_DIAGNOSTICO');
+    return orders.filter(o => 
+      o.estado === 'RECIBIDO' || 
+      o.estado === 'PENDIENTE_DIAGNOSTICO' || 
+      o.estado === 'EN_DIAGNOSTICO' ||
+      !o.estado
+    );
   }, [orders]);
 
   // Filtrado por buscador
@@ -101,7 +106,7 @@ export default function TechnicianDashboard() {
         <div className="flex items-center gap-3 shrink-0">
           <div className="bg-slate-50 border border-slate-200 px-4 py-2.5 rounded-2xl flex items-center gap-3">
             <div className="text-right">
-              <span className="text-[10px] font-bold text-gray-400 uppercase block">Pendientes en Mesa</span>
+              <span className="text-[10px] font-bold text-gray-400 uppercase block">Pendientes de Diagnóstico</span>
               <span className="text-xl font-black text-gray-900 leading-none">{activeOrders.length}</span>
             </div>
             <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
@@ -133,12 +138,12 @@ export default function TechnicianDashboard() {
         </button>
       </div>
 
-      {/* Lista de Órdenes en Mesa Técnica (RECIBIDO / EN_DIAGNOSTICO) */}
+      {/* Lista de Órdenes en Mesa Técnica (RECIBIDO / PENDIENTE_DIAGNOSTICO / EN_DIAGNOSTICO) */}
       <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden">
         <div className="p-5 border-b border-slate-100 flex items-center justify-between">
           <div>
             <h2 className="text-base sm:text-lg font-black text-gray-900">
-              Órdenes de Servicio en Cola de Laboratorio
+              Lotes / Radios Pendientes de Diagnóstico
             </h2>
             <p className="text-xs text-gray-500">
               Seleccione una orden para abrir la mesa de pruebas y registrar fallas por handy.
@@ -172,9 +177,9 @@ export default function TechnicianDashboard() {
                         #{ord.numero_orden || ord.id}
                       </span>
                       <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
-                        ord.estado === 'EN_DIAGNOSTICO' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-gray-700'
+                        ord.estado === 'EN_DIAGNOSTICO' ? 'bg-amber-100 text-amber-800' : 'bg-red-50 text-red-700 border border-red-200 font-bold'
                       }`}>
-                        {ord.estado === 'EN_DIAGNOSTICO' ? 'En Mesa RF' : 'Recibido en Mostrador'}
+                        {ord.estado === 'EN_DIAGNOSTICO' ? 'En Mesa RF' : 'Pendiente Diagnóstico'}
                       </span>
                     </div>
 
@@ -201,16 +206,16 @@ export default function TechnicianDashboard() {
                     </div>
                   </div>
 
-                  {/* Botón de Acción Exigido: [ Abrir Diagnóstico en Mesa ] */}
+                  {/* Botón de Acción Exigido: [ Diagnosticar Equipos ] */}
                   <div className="shrink-0 flex items-center justify-end">
                     <button
                       type="button"
-                      id={`btn-abrir-mesa-${ord.id}`}
+                      id={`btn-diagnosticar-equipo-${ord.id}`}
                       onClick={() => router.push(`/tecnico/diagnostico/${ord.id}`)}
                       className="w-full sm:w-auto px-5 py-3 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 active:scale-[0.98] text-white font-bold text-xs sm:text-sm rounded-xl shadow-md shadow-red-600/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
                     >
                       <Wrench size={16} />
-                      <span>Abrir Diagnóstico en Mesa</span>
+                      <span>Diagnosticar Equipos</span>
                       <ArrowRight size={15} />
                     </button>
                   </div>

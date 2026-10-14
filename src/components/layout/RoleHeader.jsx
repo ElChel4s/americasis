@@ -56,6 +56,33 @@ export default function RoleHeader({ navItems = [], roleTitle = 'Sistema ERP' })
     return pathname.startsWith(href);
   };
 
+  const [isSwitching, setIsSwitching] = useState(false);
+
+  const handleSwitchRole = async (targetRole) => {
+    try {
+      setIsSwitching(true);
+      const res = await fetch('/api/auth/switch-role', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: targetRole })
+      });
+      if (res.ok) {
+        const routeMap = {
+          RECEPCION: '/recepcion/inicio',
+          TECNICO: '/tecnico/inicio',
+          ADMINISTRADOR: '/admin/inicio'
+        };
+        window.location.href = routeMap[targetRole] || '/';
+      } else {
+        alert('No se pudo cambiar de rol para pruebas');
+        setIsSwitching(false);
+      }
+    } catch (err) {
+      console.error('Error switching role:', err);
+      setIsSwitching(false);
+    }
+  };
+
   return (
     <header className="bg-white/90 backdrop-blur-xl border-b border-slate-200 sticky top-0 z-50 print:hidden">
       {/* Toast */}
@@ -82,8 +109,59 @@ export default function RoleHeader({ navItems = [], roleTitle = 'Sistema ERP' })
           </div>
         </div>
 
+        {/* Switch Rápido de Usuario para Pruebas (Dev Bar) */}
+        <div className="flex items-center gap-1 bg-slate-100/90 p-1 sm:p-1.5 rounded-2xl border border-slate-200/90 shadow-xs">
+          <span className="hidden lg:inline text-[10px] font-black uppercase text-slate-400 px-1.5 sm:px-2 tracking-wider">
+            Probar como:
+          </span>
+          <button
+            type="button"
+            id="btn-switch-recepcion"
+            onClick={() => handleSwitchRole('RECEPCION')}
+            disabled={isSwitching}
+            className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl text-[11px] sm:text-xs font-black transition-all cursor-pointer flex items-center gap-1 ${
+              user?.rol === 'RECEPCION'
+                ? 'bg-red-600 text-white shadow-sm shadow-red-600/30'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white'
+            }`}
+            title="Cambiar sesión a Mostrador / Recepción"
+          >
+            <span>Recepción</span>
+          </button>
+
+          <button
+            type="button"
+            id="btn-switch-tecnico"
+            onClick={() => handleSwitchRole('TECNICO')}
+            disabled={isSwitching}
+            className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl text-[11px] sm:text-xs font-black transition-all cursor-pointer flex items-center gap-1 ${
+              user?.rol === 'TECNICO'
+                ? 'bg-[#1E293B] text-white shadow-sm'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white'
+            }`}
+            title="Cambiar sesión a Técnico de Laboratorio"
+          >
+            <span>Técnico</span>
+          </button>
+
+          <button
+            type="button"
+            id="btn-switch-admin"
+            onClick={() => handleSwitchRole('ADMINISTRADOR')}
+            disabled={isSwitching}
+            className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl text-[11px] sm:text-xs font-black transition-all cursor-pointer flex items-center gap-1 ${
+              user?.rol === 'ADMINISTRADOR'
+                ? 'bg-slate-900 text-white shadow-sm'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white'
+            }`}
+            title="Cambiar sesión a Administrador General"
+          >
+            <span>Admin</span>
+          </button>
+        </div>
+
         {/* Navigation */}
-        <nav className="hidden md:flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl">
+        <nav className="hidden xl:flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl">
           {navItems.map(({ href, label, short, icon: Icon, iconName }) => {
             const ResolvedIcon = typeof Icon === 'string'
               ? ICON_MAP[Icon.toLowerCase()]
@@ -93,15 +171,14 @@ export default function RoleHeader({ navItems = [], roleTitle = 'Sistema ERP' })
               <Link
                 key={href}
                 href={href}
-                className={`flex items-center gap-2 px-3 lg:px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
                   isActive(href)
                     ? 'bg-white text-gray-900 shadow-sm ring-1 ring-slate-200'
                     : 'text-gray-500 hover:text-gray-800 hover:bg-white/60'
                 }`}
               >
                 {ResolvedIcon && <ResolvedIcon size={16} className={isActive(href) ? 'text-[#E30613]' : ''} />}
-                <span className="hidden lg:inline">{label}</span>
-                <span className="lg:hidden">{short || label}</span>
+                <span>{short || label}</span>
               </Link>
             );
           })}
@@ -109,11 +186,6 @@ export default function RoleHeader({ navItems = [], roleTitle = 'Sistema ERP' })
 
         {/* User Actions */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          <button className="relative w-10 h-10 flex items-center justify-center rounded-xl hover:bg-gray-100 text-gray-500 transition-colors">
-            <Bell size={20} />
-            <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-red-500 border-2 border-white" />
-          </button>
-
           <div className="hidden sm:flex items-center gap-2.5 bg-gray-50 pl-1.5 pr-2 py-1.5 rounded-full border border-gray-200/80 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => setIsProfileModalOpen(true)} title="Ver mi perfil">
             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-navy-light to-navy flex items-center justify-center text-white font-bold text-xs shadow-sm">
               {initials(user?.nombre_completo)}

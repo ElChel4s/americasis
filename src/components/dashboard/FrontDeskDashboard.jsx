@@ -57,9 +57,14 @@ export default function FrontDeskDashboard() {
   };
 
   // 1. Filtrado de órdenes por columna del ciclo operativo
-  // Columna 1: En Taller (RECIBIDO o EN_DIAGNOSTICO)
+  // Columna 1: En Taller (RECIBIDO, PENDIENTE_DIAGNOSTICO o EN_DIAGNOSTICO)
   const ordersEnTaller = useMemo(() => {
-    return orders.filter(o => o.estado === 'RECIBIDO' || o.estado === 'EN_DIAGNOSTICO');
+    return orders.filter(o => 
+      o.estado === 'RECIBIDO' || 
+      o.estado === 'PENDIENTE_DIAGNOSTICO' || 
+      o.estado === 'EN_DIAGNOSTICO' ||
+      !o.estado
+    );
   }, [orders]);
 
   // Columna 2: Por Cotizar (DIAGNOSTICADO)
@@ -139,6 +144,23 @@ export default function FrontDeskDashboard() {
         </div>
       </div>
 
+      {/* Banner Didáctico para Pruebas de Flujo */}
+      <div className="bg-gradient-to-r from-red-50 via-amber-50 to-orange-50 border border-red-200/80 rounded-3xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+        <div className="flex items-center gap-3">
+          <span className="p-2.5 bg-[#E30613] text-white rounded-2xl shrink-0 shadow-sm shadow-red-600/30">
+            <Sparkles size={20} />
+          </span>
+          <div>
+            <h4 className="text-xs font-black uppercase tracking-wider text-red-950">
+              Flujo Operativo de Pruebas
+            </h4>
+            <p className="text-xs sm:text-sm text-gray-700 font-medium mt-0.5">
+              💡 <strong>Orden registrada con éxito.</strong> Pasa a la cuenta de Técnico (<code className="bg-white/80 px-1.5 py-0.5 rounded border border-red-200 text-[#E30613] font-bold">tecnico@americasis.com</code>) o usa los botones de <strong>&quot;Probar como...&quot;</strong> en la barra superior para realizar el diagnóstico electrónico de fallas y componentes.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Buscador Rápido de Estado en Mostrador */}
       <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-sm">
         <div className="relative">
@@ -204,7 +226,7 @@ export default function FrontDeskDashboard() {
       {/* LAS 3 COLUMNAS DEL FLUJO DE RECEPCIÓN */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* COLUMNA 1: EN TALLER (RECIBIDO / EN_DIAGNOSTICO) */}
+        {/* COLUMNA 1: EN TALLER / ESPERANDO DIAGNÓSTICO */}
         <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-5 space-y-4 flex flex-col h-full">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <div className="flex items-center gap-2">
@@ -212,8 +234,8 @@ export default function FrontDeskDashboard() {
                 <Wrench size={16} />
               </span>
               <div>
-                <h2 className="font-black text-gray-900 text-sm sm:text-base">1. En Taller</h2>
-                <p className="text-[11px] text-gray-400">Revisión técnica en mesa</p>
+                <h2 className="font-black text-gray-900 text-sm sm:text-base">1. En Taller / Esperando Diagnóstico</h2>
+                <p className="text-[11px] text-gray-400">Revisión técnica en mesa de laboratorio</p>
               </div>
             </div>
             <span className="text-xs font-black px-2.5 py-1 rounded-full bg-amber-100 text-amber-800">
@@ -232,39 +254,41 @@ export default function FrontDeskDashboard() {
                   key={o.id}
                   className="p-4 rounded-2xl border border-slate-200/90 bg-slate-50/60 hover:bg-white hover:border-slate-300 transition-all space-y-2.5"
                 >
-                  <div className="flex justify-between items-center">
-                    <span className="font-mono font-black text-gray-900 text-xs">
+                  <div className="flex justify-between items-center gap-2">
+                    <span className="font-mono font-black text-gray-900 text-xs shrink-0">
                       #{o.numero_orden || o.id}
                     </span>
-                    <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
-                      o.estado === 'EN_DIAGNOSTICO' ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-gray-700'
+                    <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-full border flex items-center gap-1 shrink-0 ${
+                      o.estado === 'EN_DIAGNOSTICO' ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-amber-50 text-amber-900 border-amber-200'
                     }`}>
-                      {o.estado === 'EN_DIAGNOSTICO' ? 'En Mesa RF' : 'Recibido'}
+                      <Clock size={11} className="text-amber-600 shrink-0" />
+                      <span>{o.estado === 'EN_DIAGNOSTICO' ? 'Técnico en Diagnóstico' : 'Esperando que el Técnico diagnostique'}</span>
                     </span>
                   </div>
 
                   <div>
                     <h3 className="font-bold text-gray-800 text-xs truncate">
-                      {o.razon_social || 'Cliente Mostrador'}
+                      {o.razon_social || o.cliente || 'Cliente Mostrador'}
                     </h3>
-                    <p className="text-[11px] text-gray-500 mt-0.5">
-                      {o.equipos?.length || 1} handy(s) en revisión
+                    <p className="text-[11px] text-gray-500 mt-0.5 font-semibold">
+                      {o.equipos?.length || 1} equipo(s) ingresados
                     </p>
                   </div>
 
                   <div className="pt-2 border-t border-slate-200/60 flex items-center justify-between">
-                    <span className="text-[10px] text-gray-400 flex items-center gap-1">
+                    <span className="text-[10px] text-gray-400 flex items-center gap-1 font-mono">
                       <Clock size={11} />
                       {new Date(o.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </span>
 
                     <button
                       type="button"
+                      id={`btn-ver-datos-ingreso-${o.id}`}
                       onClick={() => setViewingProgressOrder(o)}
-                      className="px-3 py-1.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-gray-700 font-bold text-xs flex items-center gap-1 transition-all cursor-pointer"
+                      className="px-3 py-1.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-gray-700 font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
                     >
-                      <Eye size={13} />
-                      <span>Ver Avance</span>
+                      <Eye size={13} className="text-gray-500" />
+                      <span>Ver Datos de Ingreso</span>
                     </button>
                   </div>
                 </div>
