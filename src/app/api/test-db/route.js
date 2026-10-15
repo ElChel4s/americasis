@@ -71,16 +71,17 @@ export async function GET(request) {
         error: userErr ? userErr.message : null
       };
 
-      // Probar lectura de órdenes
+      // Probar lectura de órdenes y columnas
       const { data: orders, count: orderCount, error: orderErr } = await supabase
         .from('ordenes_servicio')
-        .select('id, numero_orden, estado, creado_en', { count: 'exact' })
-        .limit(5);
+        .select('*', { count: 'exact' })
+        .limit(1);
 
       diagnostic.supabase.results.ordenes_servicio = {
         success: !orderErr,
         count: orderCount,
-        sample: orders || [],
+        columnas: Object.keys(orders?.[0] || {}),
+        sample: orders?.[0] || null,
         error: orderErr ? orderErr.message : null
       };
 

@@ -19,10 +19,14 @@ export default function FrontDeskDashboard() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [toastMessage, setToastMessage] = useState('');
+  const [technicians, setTechnicians] = useState([]);
 
   // Modales
   const [viewingProgressOrder, setViewingProgressOrder] = useState(null);
   const [deliveryModalOrder, setDeliveryModalOrder] = useState(null);
+  const [assignModalOrder, setAssignModalOrder] = useState(null);
+  const [selectedTechnicianId, setSelectedTechnicianId] = useState('');
+  const [isAssigning, setIsAssigning] = useState(false);
 
   const fetchOrders = async () => {
     try {
@@ -39,6 +43,12 @@ export default function FrontDeskDashboard() {
   useEffect(() => {
     fetchOrders();
 
+    OrdersService.getTechnicians().then(list => {
+      setTechnicians(Array.isArray(list) ? list : []);
+    }).catch(err => {
+      console.warn('Error al cargar lista de técnicos:', err);
+    });
+
     const handleOrdersUpdated = () => {
       fetchOrders();
     };
@@ -54,6 +64,57 @@ export default function FrontDeskDashboard() {
   const showToast = (msg) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(''), 4000);
+  };
+
+  // Solicitudes pendientes de técnicos para editar órdenes
+  const pendingRequests = useMemo(() => {
+    return orders.filter(o => o.solicitud_edicion_estado === 'PENDIENTE');
+  }, [orders]);
+
+  const handleApproveRequest = async (orderId) => {
+    try {
+      const updated = await OrdersService.respondTechnicianPermission(orderId, true);
+      setOrders(prev => prev.map(o => o.id === orderId ? updated : o));
+      showToast('Solicitud aprobada: Técnico habilitado para diagnosticar la orden.');
+    } catch (err) {
+      showToast('No se pudo aprobar la solicitud.');
+    }
+  };
+
+  const handleRejectRequest = async (orderId) => {
+    try {
+      const updated = await OrdersService.respondTechnicianPermission(orderId, false);
+      setOrders(prev => prev.map(o => o.id === orderId ? updated : o));
+      showToast('Solicitud de diagnóstico rechazada.');
+    } catch (err) {
+      showToast('No se pudo rechazar la solicitud.');
+    }
+  };
+
+  const handleOpenAssignModal = (order) => {
+    setAssignModalOrder(order);
+    setSelectedTechnicianId(order.usuario_tecnico_id || order.tecnico_asignado_id || '');
+  };
+
+  const handleConfirmAssign = async () => {
+    if (!assignModalOrder) return;
+    setIsAssigning(true);
+    try {
+      const tech = technicians.find(t => String(t.id) === String(selectedTechnicianId));
+      const techName = tech ? tech.nombre_completo : null;
+      const updated = await OrdersService.assignTechnician(
+        assignModalOrder.id,
+        selectedTechnicianId || null,
+        techName
+      );
+      setOrders(prev => prev.map(o => o.id === assignModalOrder.id ? updated : o));
+      showToast(tech ? `Técnico "${techName}" asignado con éxito a la orden #${assignModalOrder.numero_orden || assignModalOrder.id}` : 'Asignación de técnico eliminada.');
+      setAssignModalOrder(null);
+    } catch (err) {
+      showToast('Error al asignar técnico.');
+    } finally {
+      setIsAssigning(false);
+    }
   };
 
   // 1. Filtrado de órdenes por columna del ciclo operativo
@@ -144,22 +205,76 @@ export default function FrontDeskDashboard() {
         </div>
       </div>
 
-      {/* Banner Informativo del Flujo Operativo */}
-      <div className="bg-gradient-to-r from-red-50 via-amber-50 to-orange-50 border border-red-200/80 rounded-3xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
-        <div className="flex items-center gap-3">
-          <span className="p-2.5 bg-[#E30613] text-white rounded-2xl shrink-0 shadow-sm shadow-red-600/30">
-            <Sparkles size={20} />
-          </span>
-          <div>
-            <h4 className="text-xs font-black uppercase tracking-wider text-red-950">
-              Control de Flujo Operativo
-            </h4>
-            <p className="text-xs sm:text-sm text-gray-700 font-medium mt-0.5">
-              💡 <strong>Orden registrada con éxito.</strong> Los equipos ingresan en cola de laboratorio. El personal de servicio técnico debe iniciar sesión con su cuenta asignada (<code className="bg-white/80 px-1.5 py-0.5 rounded border border-red-200 text-[#E30613] font-bold">tecnico</code>) para realizar el diagnóstico electrónico de fallas y componentes.
-            </p>
+      {/* Banner de Solicitudes Pendientes de Técnicos */}
+      {pendingRequests.length > 0 && (
+        <div className="bg-gradient-to-r from-indigo-50 via-purple-50 to-amber-50 border-2 border-indigo-300 rounded-3xl p-5 shadow-sm space-y-4 animate-in slide-in-from-top-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="p-2.5 bg-indigo-600 text-white rounded-2xl shrink-0 shadow-sm shadow-indigo-600/30">
+                <ShieldAlert size={20} />
+              </span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h4 className="text-xs sm:text-sm font-black uppercase tracking-wider text-indigo-950">
+                    Solicitudes de Diagnóstico Técnico Pendientes
+                  </h4>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-indigo-600 text-white">
+                    {pendingRequests.length} pendiente(s)
+                  </span>
+                </div>
+                <p className="text-xs text-indigo-900 mt-0.5">
+                  Los siguientes técnicos solicitan autorización para diagnosticar y editar las órdenes indicadas:
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+            {pendingRequests.map(reqOrder => (
+              <div
+                key={reqOrder.id}
+                className="bg-white p-4 rounded-2xl border border-indigo-200/90 shadow-xs flex flex-col justify-between gap-3"
+              >
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono font-black text-xs text-gray-900">
+                      #{reqOrder.numero_orden || reqOrder.id}
+                    </span>
+                    <span className="text-[10px] font-black uppercase bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded">
+                      Permiso Requerido
+                    </span>
+                  </div>
+                  <p className="text-xs font-bold text-gray-800 truncate mt-1">
+                    {reqOrder.razon_social}
+                  </p>
+                  <p className="text-[11px] text-gray-600 mt-1">
+                    Técnico: <strong className="text-indigo-950 underline">{reqOrder.solicitud_edicion_tecnico_nombre || 'Técnico'}</strong>
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => handleApproveRequest(reqOrder.id)}
+                    className="flex-1 py-1.5 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-xs flex items-center justify-center gap-1 cursor-pointer transition-all"
+                  >
+                    <Check size={14} />
+                    <span>Aprobar Permiso</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRejectRequest(reqOrder.id)}
+                    className="py-1.5 px-3 bg-slate-100 hover:bg-slate-200 text-gray-600 text-xs font-bold rounded-xl cursor-pointer transition-all"
+                  >
+                    <X size={14} />
+                    <span>Rechazar</span>
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
-      </div>
+      )}
 
       {/* Buscador Rápido de Estado en Mostrador */}
       <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-sm">
@@ -275,6 +390,54 @@ export default function FrontDeskDashboard() {
                     </p>
                   </div>
 
+                  {/* Asignación de Técnico */}
+                  <div className="flex items-center justify-between bg-slate-100/90 p-2 rounded-xl text-xs border border-slate-200/80">
+                    <div className="flex items-center gap-1.5 truncate">
+                      <UserCheck size={13} className={o.tecnico_nombre_manual ? 'text-emerald-600 shrink-0' : 'text-gray-400 shrink-0'} />
+                      <span className="text-[11px] font-medium text-gray-700 truncate">
+                        {o.tecnico_nombre_manual ? (
+                          <>Técnico: <strong className="text-gray-900">{o.tecnico_nombre_manual}</strong></>
+                        ) : (
+                          <span className="italic text-gray-400">Sin técnico asignado</span>
+                        )}
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAssignModal(o)}
+                      className="px-2 py-0.5 text-[10px] font-bold text-navy hover:text-blue-700 bg-white border border-slate-300 rounded-lg hover:bg-blue-50 cursor-pointer shrink-0 transition-all shadow-2xs"
+                    >
+                      {o.tecnico_nombre_manual ? 'Cambiar' : '+ Designar'}
+                    </button>
+                  </div>
+
+                  {/* Si tiene solicitud pendiente de técnico */}
+                  {o.solicitud_edicion_estado === 'PENDIENTE' && (
+                    <div className="p-2 bg-indigo-50 border border-indigo-200 rounded-xl flex items-center justify-between text-xs gap-1.5">
+                      <div className="truncate">
+                        <span className="text-[9px] uppercase font-black text-indigo-900 block">Solicitud de Edición:</span>
+                        <span className="font-bold text-indigo-700 text-[11px] truncate block">{o.solicitud_edicion_tecnico_nombre}</span>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleApproveRequest(o.id)}
+                          className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold cursor-pointer"
+                        >
+                          Aprobar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRejectRequest(o.id)}
+                          className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-gray-700 rounded text-[10px] font-bold cursor-pointer"
+                        >
+                          Rechazar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="pt-2 border-t border-slate-200/60 flex items-center justify-between">
                     <span className="text-[10px] text-gray-400 flex items-center gap-1 font-mono">
                       <Clock size={11} />
@@ -338,9 +501,12 @@ export default function FrontDeskDashboard() {
                     <h3 className="font-bold text-gray-900 text-xs truncate">
                       {o.razon_social || 'Cliente Mostrador'}
                     </h3>
-                    <p className="text-[11px] text-gray-600 mt-0.5">
-                      {o.equipos?.length || 1} equipo(s) con fallas dictaminadas
-                    </p>
+                    <div className="flex items-center justify-between text-[11px] text-gray-600 mt-0.5">
+                      <span>{o.equipos?.length || 1} equipo(s) diagnosticados</span>
+                      {o.tecnico_nombre_manual && (
+                        <span className="font-semibold text-slate-700">Por: {o.tecnico_nombre_manual}</span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Botón Directo Exigido: Fijar Costos y Generar Informe */}
@@ -547,6 +713,80 @@ export default function FrontDeskDashboard() {
               >
                 <Check size={16} />
                 <span>Confirmar Entrega y Cobro</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 3: DESIGNAR / ASIGNAR TÉCNICO A LA ORDEN */}
+      {assignModalOrder && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 border border-slate-200 shadow-2xl animate-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="p-2 bg-red-50 text-[#E30613] rounded-xl">
+                  <UserCheck size={18} />
+                </span>
+                <div>
+                  <h3 className="font-black text-gray-900 text-sm">Designar Técnico Responsable</h3>
+                  <p className="text-xs text-gray-500">Orden #{assignModalOrder.numero_orden || assignModalOrder.id}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setAssignModalOrder(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs text-gray-600">
+                Seleccione el técnico que estará autorizado para diagnosticar, registrar fallas y cotizar repuestos para esta orden:
+              </p>
+
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+                <label className="text-[11px] font-bold text-gray-700 uppercase tracking-wider block">
+                  Técnico Encargado:
+                </label>
+                <select
+                  value={selectedTechnicianId}
+                  onChange={(e) => setSelectedTechnicianId(e.target.value)}
+                  className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-gray-900 focus:outline-none focus:border-[#E30613]"
+                >
+                  <option value="">-- Sin Asignar (Disponible para cualquier solicitud) --</option>
+                  {technicians.map(t => (
+                    <option key={t.id} value={t.id}>
+                      {t.nombre_completo} ({t.email})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedTechnicianId && (
+                <div className="flex items-center gap-2 text-[11px] text-emerald-800 bg-emerald-50 p-2.5 rounded-xl border border-emerald-200 font-semibold">
+                  <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
+                  <span>Este técnico tendrá permisos completos de edición en su mesa de trabajo.</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setAssignModalOrder(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-gray-600 hover:bg-slate-100"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isAssigning}
+                onClick={handleConfirmAssign}
+                className="px-5 py-2.5 rounded-xl text-xs font-black bg-navy hover:bg-slate-800 text-white shadow-md cursor-pointer disabled:opacity-50 transition-all"
+              >
+                {isAssigning ? 'Guardando Asignación...' : 'Confirmar Asignación'}
               </button>
             </div>
           </div>

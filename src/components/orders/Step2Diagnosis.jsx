@@ -163,7 +163,8 @@ export default function Step2Diagnosis({
   onSave, 
   onChange,
   isLoading = false,
-  hidePrices = true
+  hidePrices = true,
+  readOnly = false
 }) {
   // 1. Procedencia del Servicio (Aceptada / Rechazada)
   const [reparacionRechazada, setReparacionRechazada] = useState(Boolean(equipo.reparacion_rechazada));
@@ -452,10 +453,16 @@ export default function Step2Diagnosis({
 
   return (
     <div className="space-y-6 animate-slideUp font-sans pb-10">
-      
-      {/* ============================================================== */}
-      {/* 1. PROCEDENCIA DEL SERVICIO (Aceptada / Rechazada) */}
-      {/* ============================================================== */}
+      {readOnly && (
+        <div className="p-4 sm:p-5 rounded-2xl bg-amber-50/90 border border-amber-300 text-amber-950 text-xs sm:text-sm font-semibold flex items-center gap-3 shadow-xs">
+          <ShieldCheck size={22} className="text-amber-600 shrink-0" />
+          <div>
+            <strong>Modo Solo Consulta:</strong> Estás visualizando los datos y fallas de este equipo. Los campos están bloqueados para edición. Para modificar el diagnóstico, debes ser el técnico asignado por Recepción o Administración.
+          </div>
+        </div>
+      )}
+
+      <fieldset disabled={readOnly} className={`space-y-6 border-0 p-0 m-0 ${readOnly ? 'opacity-90 select-text' : ''}`}>
       <div className={`p-4 sm:p-5 rounded-3xl border transition-all ${
         reparacionRechazada 
           ? 'bg-red-50/60 border-red-200 text-red-900 shadow-sm' 
@@ -1089,6 +1096,7 @@ export default function Step2Diagnosis({
           </div>
         </div>
       )}
+      </fieldset>
 
       {/* Modal de Sincronización Móvil vía Código QR */}
       <QrMobileModal

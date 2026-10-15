@@ -714,6 +714,9 @@ export const OrdersRepository = {
     }
     if (updateData.notas_internas !== undefined) fieldsToUpdate.notas_internas = updateData.notas_internas;
     if (updateData.condiciones) fieldsToUpdate.condiciones_comerciales_json = updateData.condiciones;
+    if (updateData.condiciones_comerciales_json) fieldsToUpdate.condiciones_comerciales_json = updateData.condiciones_comerciales_json;
+    if (updateData.usuario_tecnico_id !== undefined) fieldsToUpdate.usuario_tecnico_id = updateData.usuario_tecnico_id;
+    if (updateData.tecnico_nombre_manual !== undefined) fieldsToUpdate.tecnico_nombre_manual = updateData.tecnico_nombre_manual;
     fieldsToUpdate.actualizado_en = new Date().toISOString();
 
     if (supabase) {
@@ -739,8 +742,10 @@ export const OrdersRepository = {
             sumatoria_total = COALESCE($3, sumatoria_total),
             total_literal = COALESCE($4, total_literal),
             notas_internas = COALESCE($5, notas_internas),
+            usuario_tecnico_id = COALESCE($6, usuario_tecnico_id),
+            tecnico_nombre_manual = COALESCE($7, tecnico_nombre_manual),
             actualizado_en = NOW()
-        WHERE id = $6
+        WHERE id = $8
         RETURNING *
       `, [
         estado || null,
@@ -748,6 +753,8 @@ export const OrdersRepository = {
         updateData.sumatoria_total !== undefined ? updateData.sumatoria_total : null,
         updateData.sumatoria_total !== undefined ? numeroALetras(updateData.sumatoria_total, updateData.moneda || 'BOB') : null,
         updateData.notas_internas || null,
+        updateData.usuario_tecnico_id || null,
+        updateData.tecnico_nombre_manual || null,
         orderId
       ]);
       return rows[0] || null;

@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft, Wrench, Send, Save, CheckCircle2,
   AlertCircle, Loader2, Radio, Camera, ShieldCheck,
-  Check, Clock
+  Check, Clock, Lock, ShieldAlert, UserCheck
 } from 'lucide-react';
 import { OrdersService } from '@/lib/services/orders.service';
 import Step2Diagnosis from '@/components/orders/Step2Diagnosis';
@@ -17,9 +17,11 @@ export default function TecnicoDiagnosticoMesaPage() {
   const ordenId = params.ordenId || params.id;
 
   const [order, setOrder] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeEquipoIdx, setActiveEquipoIdx] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
+  const [isRequestingPermission, setIsRequestingPermission] = useState(false);
   const [feedback, setFeedback] = useState(null);
 
   useEffect(() => {
@@ -30,6 +32,16 @@ export default function TecnicoDiagnosticoMesaPage() {
         setLoading(false);
       }
     });
+
+    fetch('/api/auth/me')
+      .then(r => r.json())
+      .then(j => {
+        if (isMounted && j.success) {
+          setCurrentUser(j.data);
+        }
+      })
+      .catch(() => {});
+
     return () => { isMounted = false; };
   }, [ordenId]);
 
@@ -38,7 +50,47 @@ export default function TecnicoDiagnosticoMesaPage() {
     setTimeout(() => setFeedback(null), 4000);
   };
 
+  // Cálculo de permisos de edición:
+  // Administrador tiene acceso total. El técnico asignado tiene permiso de edición.
+  // Los demás técnicos tienen acceso en modo solo consulta.
+  const isAdmin = currentUser?.rol === 'ADMINISTRADOR';
+  const isAssigned = Boolean(
+    order?.usuario_tecnico_id && (
+      String(order.usuario_tecnico_id) === String(currentUser?.id) ||
+      order.usuario_tecnico_id === currentUser?.id
+    )
+  ) || Boolean(
+    order?.tecnico_nombre_manual && currentUser?.nombre_completo &&
+    order.tecnico_nombre_manual.toLowerCase().includes(currentUser.nombre_completo.toLowerCase())
+  ) || Boolean(
+    order?.tecnico_asignado_id && String(order.tecnico_asignado_id) === String(currentUser?.id)
+  );
+
+  const canEdit = isAdmin || isAssigned;
+  const isPendingRequest = order?.solicitud_edicion_estado === 'PENDIENTE';
+  const myPendingRequest = isPendingRequest && (
+    order?.solicitud_edicion_tecnico_id === currentUser?.id ||
+    order?.solicitud_edicion_tecnico_nombre === currentUser?.nombre_completo
+  );
+
+  const handleSolicitarPermiso = async () => {
+    if (!currentUser) return;
+    setIsRequestingPermission(true);
+    try {
+      const updated = await OrdersService.requestTechnicianPermission(order.id, currentUser);
+      if (updated) {
+        setOrder(updated);
+        showFeedbackMsg('Solicitud enviada a Recepción y Administración.');
+      }
+    } catch (err) {
+      showFeedbackMsg('No se pudo enviar la solicitud.', 'error');
+    } finally {
+      setIsRequestingPermission(false);
+    }
+  };
+
   const updateEquipoDiagnosis = (data) => {
+    if (!canEdit) return;
     setOrder(prev => {
       const newEquipos = [...(prev.equipos || [])];
       newEquipos[activeEquipoIdx] = {
@@ -51,6 +103,7 @@ export default function TecnicoDiagnosticoMesaPage() {
 
   // Botón de salida 1: [ Guardar Avance ] (guarda como EN_DIAGNOSTICO)
   const handleGuardarAvance = async () => {
+    if (!canEdit) return;
     setIsSaving(true);
     try {
       await OrdersService.saveDiagnosis(order.id, order.equipos, false);
@@ -65,6 +118,7 @@ export default function TecnicoDiagnosticoMesaPage() {
 
   // Botón de salida 2: [ Finalizar Diagnóstico y Enviar a Recepción ] (guarda como DIAGNOSTICADO y vuelve a /tecnico/inicio)
   const handleFinalizarDiagnostico = async () => {
+    if (!canEdit) return;
     setIsSaving(true);
     try {
       await OrdersService.saveDiagnosis(order.id, order.equipos, true);
@@ -122,6 +176,60 @@ export default function TecnicoDiagnosticoMesaPage() {
         </div>
       )}
 
+      {/* Banner de Estado de Permisos de Edición */}
+      {!canEdit && (
+        <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="p-2.5 bg-amber-200/70 text-amber-900 rounded-xl shrink-0 mt-0.5">
+              <Lock size={20} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="font-black text-amber-950 text-sm">
+                  Modo Solo Consulta — Diagnóstico Protegido
+                </h4>
+                <span className="text-[10px] uppercase font-black bg-amber-200 text-amber-900 px-2 py-0.5 rounded-md">
+                  Solo Lectura
+                </span>
+              </div>
+              <p className="text-xs text-amber-800 mt-0.5">
+                {order.tecnico_nombre_manual
+                  ? `Esta orden está asignada al técnico "${order.tecnico_nombre_manual}". Puedes revisar todos los datos, pero para editar necesitas autorización.`
+                  : `Esta orden aún no ha sido asignada a ningún técnico. Puedes consultar los datos o solicitar que Recepción te la asigne.`}
+              </p>
+            </div>
+          </div>
+
+          <div className="shrink-0 w-full sm:w-auto">
+            {myPendingRequest ? (
+              <div className="flex items-center gap-2 bg-amber-100/90 text-amber-900 px-4 py-2.5 rounded-xl border border-amber-300 text-xs font-bold shadow-xs">
+                <Clock size={16} className="text-amber-700 animate-pulse" />
+                <span>Solicitud enviada a Recepción (Pendiente)</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSolicitarPermiso}
+                disabled={isRequestingPermission}
+                className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 bg-navy hover:bg-slate-800 active:scale-95 text-white text-xs font-black rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isRequestingPermission ? (
+                  <>
+                    <Loader2 size={15} className="animate-spin" />
+                    <span>Enviando solicitud...</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldAlert size={15} />
+                    <span>Solicitar Permiso para Diagnosticar</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Barra Superior de Retorno */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/80 pb-4">
         <button
@@ -133,9 +241,12 @@ export default function TecnicoDiagnosticoMesaPage() {
           <span>Volver a Cola de Mesa</span>
         </button>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-mono font-bold text-gray-900 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-xs">
             #{order.numero_orden || order.id} — {order.razon_social}
+          </span>
+          <span className="text-[10px] font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-xl">
+            Asignado a: <strong className="text-gray-900">{order.tecnico_nombre_manual || 'Sin Asignar'}</strong>
           </span>
           <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded-xl bg-amber-100 text-amber-800">
             Fase 2: Mesa de Diagnóstico
@@ -246,6 +357,7 @@ export default function TecnicoDiagnosticoMesaPage() {
         hidePrices={true}
         onChange={updateEquipoDiagnosis}
         isLoading={isSaving}
+        readOnly={!canEdit}
       />
 
       {/* ============================================================== */}
@@ -257,43 +369,77 @@ export default function TecnicoDiagnosticoMesaPage() {
             Control de Mesa Técnica
           </h4>
           <p className="text-xs text-gray-500">
-            Guarde avances preliminares o envíe el diagnóstico concluido a recepción para cotizar.
+            {canEdit
+              ? 'Guarde avances preliminares o envíe el diagnóstico concluido a recepción para cotizar.'
+              : 'Orden en modo lectura. Solo el técnico asignado o administrador pueden modificar el diagnóstico.'}
           </p>
         </div>
 
         <div className="flex items-center gap-3 w-full sm:w-auto">
-          {/* Botón 1: [ Guardar Avance ] (guarda como EN_DIAGNOSTICO) */}
-          <button
-            type="button"
-            id="btn-guardar-avance"
-            disabled={isSaving}
-            onClick={handleGuardarAvance}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-3.5 bg-white hover:bg-slate-50 border border-slate-300 font-bold text-xs sm:text-sm text-gray-800 rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-50"
-          >
-            <Save size={16} />
-            <span>Guardar Avance</span>
-          </button>
+          {canEdit ? (
+            <>
+              {/* Botón 1: [ Guardar Avance ] (guarda como EN_DIAGNOSTICO) */}
+              <button
+                type="button"
+                id="btn-guardar-avance"
+                disabled={isSaving}
+                onClick={handleGuardarAvance}
+                className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-3.5 bg-white hover:bg-slate-50 border border-slate-300 font-bold text-xs sm:text-sm text-gray-800 rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-50"
+              >
+                <Save size={16} />
+                <span>Guardar Avance</span>
+              </button>
 
-          {/* Botón 2: [ Finalizar Diagnóstico y Enviar a Recepción ] (guarda como DIAGNOSTICADO y vuelve a /tecnico/inicio) */}
-          <button
-            type="button"
-            id="btn-finalizar-diagnostico"
-            disabled={isSaving}
-            onClick={handleFinalizarDiagnostico}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 active:scale-[0.98] text-white font-black text-xs sm:text-sm rounded-xl shadow-lg shadow-red-600/25 transition-all cursor-pointer disabled:opacity-50"
-          >
-            {isSaving ? (
-              <>
-                <Loader2 size={16} className="animate-spin" />
-                <span>Enviando...</span>
-              </>
-            ) : (
-              <>
-                <Send size={16} />
-                <span>Finalizar Diagnóstico y Enviar a Recepción</span>
-              </>
-            )}
-          </button>
+              {/* Botón 2: [ Finalizar Diagnóstico y Enviar a Recepción ] (guarda como DIAGNOSTICADO y vuelve a /tecnico/inicio) */}
+              <button
+                type="button"
+                id="btn-finalizar-diagnostico"
+                disabled={isSaving}
+                onClick={handleFinalizarDiagnostico}
+                className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 active:scale-[0.98] text-white font-black text-xs sm:text-sm rounded-xl shadow-lg shadow-red-600/25 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isSaving ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    <span>Enviando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send size={16} />
+                    <span>Finalizar Diagnóstico y Enviar a Recepción</span>
+                  </>
+                )}
+              </button>
+            </>
+          ) : (
+            <div className="w-full sm:w-auto flex items-center gap-2">
+              {myPendingRequest ? (
+                <div className="flex items-center gap-2 bg-amber-100 text-amber-900 px-4 py-3 rounded-xl border border-amber-300 text-xs font-bold">
+                  <Clock size={16} className="text-amber-700 animate-spin" />
+                  <span>Esperando aprobación de Recepción</span>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleSolicitarPermiso}
+                  disabled={isRequestingPermission}
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3.5 bg-navy hover:bg-slate-800 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {isRequestingPermission ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      <span>Enviando solicitud...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldAlert size={16} />
+                      <span>Solicitar Permiso para Diagnosticar</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

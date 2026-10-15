@@ -22,8 +22,8 @@ export async function GET(request) {
   const user = verifyAuth(request);
   if (features.auth) {
     if (!user) return errorResponse('No autorizado', 401);
-    if (user.rol !== 'ADMINISTRADOR') {
-      return errorResponse('Acceso denegado: Se requieren privilegios de administración', 403);
+    if (user.rol !== 'ADMINISTRADOR' && user.rol !== 'RECEPCION') {
+      return errorResponse('Acceso denegado: Se requieren privilegios de administración o recepción', 403);
     }
   }
 

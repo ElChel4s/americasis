@@ -27,8 +27,17 @@ export async function PUT(request, { params }) {
       return successResponse(result, 'Diagnóstico actualizado exitosamente');
     }
 
-    // 2. Si viene actualización de estado general, presupuesto o condiciones
-    if (body.estado || body.status || body.condiciones || body.sumatoria_total !== undefined || body.moneda) {
+    // 2. Si viene asignación de técnico, estado general, presupuesto o condiciones
+    if (
+      body.estado || 
+      body.status || 
+      body.condiciones || 
+      body.sumatoria_total !== undefined || 
+      body.moneda ||
+      body.usuario_tecnico_id !== undefined ||
+      body.tecnico_nombre_manual !== undefined ||
+      body.condiciones_comerciales_json !== undefined
+    ) {
       const result = await OrdersService.updateOrderGeneral(id, body, user);
       return successResponse(result, 'Orden actualizada exitosamente');
     }
