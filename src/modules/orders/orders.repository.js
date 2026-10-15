@@ -274,6 +274,47 @@ export const OrdersRepository = {
   },
 
   /**
+   * Resuelve el UUID real de la orden en Supabase si se provee secuencia_num o numero_orden
+   */
+  async resolveOrderUuid(orderIdOrNumber) {
+    if (!orderIdOrNumber) return null;
+    const str = String(orderIdOrNumber).trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+    if (isUuid) return str;
+
+    if (supabase) {
+      // 1. Coincidencia directa por numero_orden (ej: "OS-00001")
+      const { data: direct } = await supabase
+        .from('ordenes_servicio')
+        .select('id')
+        .eq('numero_orden', str)
+        .maybeSingle();
+      if (direct?.id) return direct.id;
+
+      // 2. Coincidencia por numero normalizado (ej: "1" -> "OS-00001")
+      const numOnly = str.replace(/\D/g, '');
+      if (numOnly) {
+        const padded = 'OS-' + String(numOnly).padStart(5, '0');
+        const { data: byPad } = await supabase
+          .from('ordenes_servicio')
+          .select('id')
+          .eq('numero_orden', padded)
+          .maybeSingle();
+        if (byPad?.id) return byPad.id;
+
+        const numInt = parseInt(numOnly, 10);
+        const { data: bySeq } = await supabase
+          .from('ordenes_servicio')
+          .select('id')
+          .eq('secuencia_num', numInt)
+          .maybeSingle();
+        if (bySeq?.id) return bySeq.id;
+      }
+    }
+    return str;
+  },
+
+  /**
    * Guarda o actualiza el diagnóstico de un equipo específico en la orden
    * y recalcula automáticamente los subtotales 1 y 2 de la orden.
    */
@@ -419,6 +460,22 @@ export const OrdersRepository = {
    * Diagnóstico en Supabase Cloud
    */
   async saveDiagnosisSupabase(ordenId, equipoId, diagnosisData) {
+    const resolvedOrderId = await this.resolveOrderUuid(ordenId);
+    let resolvedEquipoId = equipoId;
+
+    // Si el equipoId no es un UUID válido, resolverlo buscando en los equipos de esta orden
+    const isEqUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(equipoId));
+    if (!isEqUuid) {
+      const idx = parseInt(String(equipoId).replace(/\D/g, ''), 10) || 1;
+      const { data: matchedEq } = await supabase
+        .from('orden_equipos')
+        .select('id')
+        .eq('orden_id', resolvedOrderId)
+        .eq('orden_indice', idx)
+        .maybeSingle();
+      if (matchedEq?.id) resolvedEquipoId = matchedEq.id;
+    }
+
     const isRechazado = Boolean(diagnosisData.reparacion_rechazada);
     const costoServicio = isRechazado ? 0 : (parseFloat(diagnosisData.costo_servicio) || 0);
 
@@ -436,7 +493,7 @@ export const OrdersRepository = {
         tecnico_nombre_manual: diagnosisData.tecnico_nombre_manual || null,
         actualizado_en: new Date().toISOString()
       })
-      .eq('id', equipoId)
+      .eq('id', resolvedEquipoId)
       .select()
       .single();
 
@@ -445,10 +502,10 @@ export const OrdersRepository = {
     }
 
     // 2. Sincronizar fallas
-    await supabase.from('equipo_fallas').delete().eq('equipo_id', equipoId);
+    await supabase.from('equipo_fallas').delete().eq('equipo_id', resolvedEquipoId);
     if (Array.isArray(diagnosisData.fallas) && diagnosisData.fallas.length > 0) {
       const fallasRows = diagnosisData.fallas.map(f => ({
-        equipo_id: equipoId,
+        equipo_id: resolvedEquipoId,
         codigo: f.codigo || (f.label ? f.label.toUpperCase().replace(/\s+/g, '_') : 'FALLA_CUSTOM'),
         label: f.label || 'Falla General',
         descripcion: f.descripcion || '',
@@ -459,10 +516,10 @@ export const OrdersRepository = {
     }
 
     // 3. Sincronizar repuestos
-    await supabase.from('equipo_repuestos_cotizados').delete().eq('equipo_id', equipoId);
+    await supabase.from('equipo_repuestos_cotizados').delete().eq('equipo_id', resolvedEquipoId);
     if (Array.isArray(diagnosisData.repuestos) && diagnosisData.repuestos.length > 0) {
       const repRows = diagnosisData.repuestos.map((rep, idx) => ({
-        equipo_id: equipoId,
+        equipo_id: resolvedEquipoId,
         nombre: rep.nombre || 'Repuesto / Accesorio',
         estado_condicion: rep.estado_condicion || 'Operativa',
         se_reemplaza: Boolean(rep.se_reemplaza),
@@ -482,7 +539,7 @@ export const OrdersRepository = {
     const { data: allEqs } = await supabase
       .from('orden_equipos')
       .select('id, costo_servicio, reparacion_rechazada')
-      .eq('orden_id', ordenId);
+      .eq('orden_id', resolvedOrderId);
 
     const subtotal1 = (allEqs || []).reduce((acc, curr) => {
       if (curr.reparacion_rechazada) return acc;
@@ -503,12 +560,16 @@ export const OrdersRepository = {
       }, 0);
     }
 
-
     const sumatoriaTotal = Number((subtotal1 + subtotal2).toFixed(2));
 
-    const { data: ordCurrent } = await supabase.from('ordenes_servicio').select('moneda, estado').eq('id', ordenId).single();
+    const { data: ordCurrent } = await supabase.from('ordenes_servicio').select('moneda, estado, fecha_diagnostico').eq('id', resolvedOrderId).single();
     const moneda = ordCurrent?.moneda || 'BOB';
     const literal = numeroALetras(sumatoriaTotal, moneda);
+
+    const shouldTransitionToDiagnosticado = diagnosisData.estado_individual === 'DIAGNOSTICADO' || diagnosisData.finalizar;
+    const nuevoEstado = shouldTransitionToDiagnosticado 
+      ? 'DIAGNOSTICADO' 
+      : (ordCurrent?.estado === 'RECIBIDO' || ordCurrent?.estado === 'BORRADOR' ? 'EN_DIAGNOSTICO' : ordCurrent?.estado);
 
     const { data: updatedOrden } = await supabase
       .from('ordenes_servicio')
@@ -517,10 +578,11 @@ export const OrdersRepository = {
         monto_subtotal_accesorios: subtotal2,
         sumatoria_total: sumatoriaTotal,
         total_literal: literal,
-        estado: ordCurrent?.estado === 'BORRADOR' ? 'EN_DIAGNOSTICO' : ordCurrent?.estado,
+        estado: nuevoEstado,
+        fecha_diagnostico: shouldTransitionToDiagnosticado ? (ordCurrent?.fecha_diagnostico || new Date().toISOString()) : ordCurrent?.fecha_diagnostico,
         actualizado_en: new Date().toISOString()
       })
-      .eq('id', ordenId)
+      .eq('id', resolvedOrderId)
       .select()
       .single();
 
@@ -542,10 +604,11 @@ export const OrdersRepository = {
   async getOrderWithDetails(orderId) {
     if (supabase) {
       try {
+        const resolvedOrderId = await this.resolveOrderUuid(orderId);
         const { data: orden, error } = await supabase
           .from('ordenes_servicio')
           .select('*, clientes (*)')
-          .eq('id', orderId)
+          .eq('id', resolvedOrderId)
           .maybeSingle();
 
         if (orden && !error) {
@@ -558,7 +621,7 @@ export const OrdersRepository = {
               equipo_repuestos_cotizados (*),
               equipo_evidencias (*)
             `)
-            .eq('orden_id', orderId)
+            .eq('orden_id', resolvedOrderId)
             .order('orden_indice', { ascending: true });
 
           orden.equipos = (equipos || []).map(eq => ({
@@ -725,10 +788,11 @@ export const OrdersRepository = {
 
     if (supabase) {
       try {
+        const resolvedOrderId = await this.resolveOrderUuid(orderId);
         const { data, error } = await supabase
           .from('ordenes_servicio')
           .update(fieldsToUpdate)
-          .eq('id', orderId)
+          .eq('id', resolvedOrderId)
           .select()
           .single();
 

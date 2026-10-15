@@ -219,19 +219,30 @@ export const OrdersService = {
    */
   getOrderById: async (id) => {
     if (typeof window === 'undefined') return null;
-    const orders = await OrdersService.getOrders();
-    const found = orders.find(o => String(o.id) === String(id) || String(o.numero_orden) === String(id)) || null;
-    if (found) return rehydrateOrder(found);
 
     try {
       const res = await fetch(`/api/orders/${id}`);
       if (res.ok) {
         const result = await res.json();
         if (result.success && result.data) {
-          return rehydrateOrder(result.data);
+          const rehydrated = rehydrateOrder(result.data);
+          // Actualizar caché local con la versión completa y fresca de Supabase
+          const orders = getStoredLocalOrders();
+          const idx = orders.findIndex(o => String(o.id) === String(id) || String(o.numero_orden) === String(id));
+          if (idx >= 0) {
+            orders[idx] = rehydrated;
+            safeSaveLocalStorage(orders);
+          }
+          return rehydrated;
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn('[OrdersService] Error fetching order from API, fallback to local list:', e);
+    }
+
+    const orders = await OrdersService.getOrders();
+    const found = orders.find(o => String(o.id) === String(id) || String(o.numero_orden) === String(id)) || null;
+    if (found) return rehydrateOrder(found);
 
     return null;
   },
@@ -456,26 +467,53 @@ export const OrdersService = {
 
     try {
       for (const eq of (equipos || [])) {
+        const payload = {
+          equipoId: eq.id,
+          diagnosis: {
+            estado_individual: newStatus,
+            reparacion_rechazada: Boolean(eq.reparacion_rechazada),
+            motivo_rechazo: eq.motivo_rechazo || null,
+            texto_diagnostico: eq.texto_diagnostico || '',
+            notas_adicionales: eq.notas_adicionales || null,
+            descripcion_servicio: eq.descripcion_servicio || '',
+            costo_servicio: eq.costo_servicio || 0,
+            fallas: eq.fallas || [],
+            repuestos: eq.repuestos || [],
+            tecnico_nombre_manual: eq.tecnico_nombre_manual || null,
+            finalizar: finalizar
+          }
+        };
+
+        const res = await fetch(`/api/orders/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          console.warn('[OrdersService] Error guardando diagnóstico del equipo:', errData);
+          throw new Error(errData.message || 'Error del servidor al guardar diagnóstico');
+        }
+      }
+
+      // Si se finaliza el diagnóstico, asegurar actualización del estado general de la orden
+      if (finalizar) {
         await fetch(`/api/orders/${id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            equipoId: eq.id,
-            diagnosis: {
-              estado_individual: newStatus,
-              texto_diagnostico: eq.texto_diagnostico || '',
-              descripcion_servicio: eq.descripcion_servicio || '',
-              costo_servicio: eq.costo_servicio || 0,
-              fallas: eq.fallas || [],
-              repuestos: eq.repuestos || []
-            }
+            estado: 'DIAGNOSTICADO'
           })
-        });
+        }).catch(err => console.warn('[OrdersService] Error actualizando estado general:', err));
       }
-    } catch (e) {}
+    } catch (err) {
+      console.error('[OrdersService] Error en saveDiagnosis:', err);
+      throw err;
+    }
 
     const orders = await OrdersService.getOrders();
-    const index = orders.findIndex(o => String(o.id) === String(id));
+    const index = orders.findIndex(o => String(o.id) === String(id) || String(o.numero_orden) === String(id));
     if (index >= 0) {
       orders[index].equipos = equipos;
       orders[index].estado = newStatus;

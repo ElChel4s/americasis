@@ -122,11 +122,12 @@ export default function TecnicoDiagnosticoMesaPage() {
     if (!canEdit) return;
     setIsSaving(true);
     try {
-      await OrdersService.saveDiagnosis(order.id, order.equipos, false);
-      showFeedbackMsg('Avance técnico guardado en mesa (Estado: EN DIAGNÓSTICO).');
+      const updated = await OrdersService.saveDiagnosis(order.id, order.equipos, false);
+      if (updated) setOrder(updated);
+      showFeedbackMsg('✓ Avance técnico guardado en mesa (Estado: EN DIAGNÓSTICO).');
     } catch (err) {
       console.error('Error al guardar avance:', err);
-      showFeedbackMsg('No se pudo guardar el avance.', 'error');
+      showFeedbackMsg('Error al guardar el avance: ' + (err.message || 'Error de conexión'), 'error');
     } finally {
       setIsSaving(false);
     }
@@ -137,17 +138,18 @@ export default function TecnicoDiagnosticoMesaPage() {
     if (!canEdit) return;
     setIsSaving(true);
     try {
-      await OrdersService.saveDiagnosis(order.id, order.equipos, true);
+      const updated = await OrdersService.saveDiagnosis(order.id, order.equipos, true);
+      if (updated) setOrder(updated);
       const msg = isRecepcion 
-        ? '¡Diagnóstico guardado con éxito por Recepción!' 
-        : '¡Diagnóstico completado con éxito! Enviado a mostrador para presupuestar.';
+        ? '✓ ¡Diagnóstico guardado con éxito por Recepción!' 
+        : '✓ ¡Diagnóstico completado con éxito! Enviado a mostrador para presupuestar.';
       showFeedbackMsg(msg);
       setTimeout(() => {
         router.push(getReturnRoute());
       }, 800);
     } catch (err) {
       console.error('Error al finalizar diagnóstico:', err);
-      showFeedbackMsg('Error al finalizar diagnóstico.', 'error');
+      showFeedbackMsg('Error al finalizar diagnóstico: ' + (err.message || 'Error de conexión'), 'error');
       setIsSaving(false);
     }
   };

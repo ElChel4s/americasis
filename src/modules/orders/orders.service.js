@@ -72,8 +72,8 @@ export const OrdersService = {
         : `Diagnóstico actualizado para equipo #${equipoId}. Subtotal servicio: ${result.subtotales.subtotal1_servicio}, repuestos: ${result.subtotales.subtotal2_accesorios}`;
 
       await logAudit({
-        ordenId: parseInt(ordenId, 10),
-        equipoId: parseInt(equipoId, 10),
+        ordenId: typeof ordenId === 'string' && ordenId.length > 20 ? ordenId : (parseInt(ordenId, 10) || null),
+        equipoId: typeof equipoId === 'string' && equipoId.length > 20 ? equipoId : (parseInt(equipoId, 10) || null),
         usuarioId: user?.id || null,
         usuarioNombre: user?.nombre_completo || diagnosisData.tecnico_nombre_manual || 'Técnico Laboratorio',
         usuarioRol: user?.rol || 'TECNICO',
