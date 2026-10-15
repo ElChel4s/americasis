@@ -706,9 +706,50 @@ export default function FrontDeskDashboard() {
               </button>
             </div>
 
-            <div>
-              <p className="text-xs text-gray-500">Cliente / Empresa:</p>
-              <p className="font-bold text-sm text-gray-900">{viewingProgressOrder.razon_social}</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200">
+                <p className="text-[11px] font-bold text-gray-500 uppercase">Cliente / Empresa:</p>
+                <p className="font-bold text-sm text-gray-900 truncate">{viewingProgressOrder.razon_social}</p>
+              </div>
+
+              {/* Asignación Directa de Técnico desde el Modal */}
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 space-y-1">
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] font-bold text-gray-500 uppercase flex items-center gap-1">
+                    <UserCheck size={13} className="text-[#E30613]" />
+                    <span>Técnico Responsable:</span>
+                  </p>
+                  {viewingProgressOrder.tecnico_nombre_manual && (
+                    <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded">
+                      Habilitado
+                    </span>
+                  )}
+                </div>
+                <select
+                  value={viewingProgressOrder.usuario_tecnico_id || ''}
+                  onChange={async (e) => {
+                    const techId = e.target.value;
+                    const tech = technicians.find(t => String(t.id) === String(techId));
+                    const techName = tech ? tech.nombre_completo : null;
+                    try {
+                      const updated = await OrdersService.assignTechnician(viewingProgressOrder.id, techId || null, techName);
+                      setViewingProgressOrder(updated);
+                      setOrders(prev => prev.map(o => o.id === viewingProgressOrder.id ? updated : o));
+                      showToast(tech ? `✓ Técnico ${techName} asignado a la orden` : 'Asignación eliminada');
+                    } catch (err) {
+                      showToast('Error al asignar técnico');
+                    }
+                  }}
+                  className="w-full py-1.5 px-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-gray-800 focus:outline-none focus:border-[#E30613]"
+                >
+                  <option value="">-- Sin Asignar (Cualquiera puede solicitar) --</option>
+                  {technicians.map(t => (
+                    <option key={t.id} value={t.id}>
+                      👤 {t.nombre_completo}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <div className="space-y-3">
