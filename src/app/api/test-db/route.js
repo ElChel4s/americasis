@@ -22,16 +22,45 @@ export async function GET() {
   // 1. Probar Supabase Client
   if (supabase) {
     try {
-      // Probar lectura de usuarios
+      // Probar lectura de usuarios y verificar hashes
+      const bcrypt = (await import('bcryptjs')).default;
       const { data: users, count: userCount, error: userErr } = await supabase
         .from('usuarios')
-        .select('id, email, rol', { count: 'exact' })
-        .limit(5);
+        .select('id, email, rol, activo, password_hash', { count: 'exact' });
+
+      const verifiedUsers = (users || []).map(u => ({
+        id: u.id,
+        email: u.email,
+        rol: u.rol,
+        activo: u.activo,
+        hashLength: u.password_hash?.length,
+        passwordMatches: bcrypt.compareSync('America2026!', u.password_hash || '')
+      }));
+
+      const { AuthService } = await import('@/modules/auth/auth.service');
+      let loginTecnicoCorto = null;
+      let loginTecnicoEmail = null;
+
+      try {
+        const res1 = await AuthService.login({ email: 'tecnico', password: 'America2026!' });
+        loginTecnicoCorto = { success: true, email: res1.user.email, rol: res1.user.rol };
+      } catch (err1) {
+        loginTecnicoCorto = { success: false, error: err1.message };
+      }
+
+      try {
+        const res2 = await AuthService.login({ email: 'tecnico@americasis.com', password: 'America2026!' });
+        loginTecnicoEmail = { success: true, email: res2.user.email, rol: res2.user.rol };
+      } catch (err2) {
+        loginTecnicoEmail = { success: false, error: err2.message };
+      }
 
       diagnostic.supabase.results.usuarios = {
         success: !userErr,
         count: userCount,
-        sample: users || [],
+        verifiedUsers,
+        testLoginConTecnicoCorto: loginTecnicoCorto,
+        testLoginConTecnicoEmail: loginTecnicoEmail,
         error: userErr ? userErr.message : null
       };
 

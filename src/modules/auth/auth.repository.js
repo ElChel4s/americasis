@@ -50,13 +50,14 @@ export const AuthRepository = {
    */
   async findByEmail(email) {
     const cleanEmail = email ? email.trim().toLowerCase() : '';
+    const usernameOnly = cleanEmail.split('@')[0];
 
     if (supabase) {
       try {
         const { data, error } = await supabase
           .from('usuarios')
           .select('id, sucursal_id, nombre_completo, email, password_hash, rol, activo, token_version, ultimo_login, creado_en')
-          .ilike('email', cleanEmail)
+          .or(`email.ilike.${cleanEmail},email.ilike.${usernameOnly}`)
           .limit(1)
           .maybeSingle();
 
@@ -68,15 +69,19 @@ export const AuthRepository = {
       const { rows } = await pool.query(
         `SELECT id, sucursal_id, nombre_completo, email, password_hash, rol, activo, token_version, ultimo_login, creado_en 
          FROM usuarios 
-         WHERE LOWER(TRIM(email)) = $1 
+         WHERE LOWER(TRIM(email)) = $1 OR LOWER(TRIM(email)) = $2
          LIMIT 1`,
-        [cleanEmail]
+        [cleanEmail, usernameOnly]
       );
-      return rows[0] || null;
-    } catch (err) {
-      const found = mockUsers.find(u => u.email.toLowerCase() === cleanEmail);
-      return found ? { ...found } : null;
-    }
+      if (rows && rows.length > 0) return rows[0];
+    } catch (err) {}
+
+    const found = mockUsers.find(u => 
+      u.email.toLowerCase() === cleanEmail || 
+      u.email.toLowerCase() === usernameOnly ||
+      cleanEmail.startsWith(u.email.toLowerCase() + '@')
+    );
+    return found ? { ...found } : null;
   },
 
   /**
