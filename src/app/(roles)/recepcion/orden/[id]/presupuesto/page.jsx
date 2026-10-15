@@ -24,8 +24,24 @@ export default function PresupuestoOrdenPage() {
   const [loading, setLoading] = useState(true);
   const [activeEquipoIdx, setActiveEquipoIdx] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
-  const [showPreviewModal, setShowPreviewModal] = useState(autoPrint);
   const [feedback, setFeedback] = useState(null);
+  const [userRole, setUserRole] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('america_user_role') || '';
+    }
+    return '';
+  });
+
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then(r => r.json())
+      .then(j => {
+        if (j.success && j.data?.rol) {
+          setUserRole(j.data.rol);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Cargar orden
   useEffect(() => {
@@ -85,7 +101,7 @@ export default function PresupuestoOrdenPage() {
 
       showFeedbackMsg('Presupuesto fijado con éxito. Estado actualizado a COTIZADO.');
       setTimeout(() => {
-        router.push('/recepcion/inicio');
+        router.push(userRole === 'ADMINISTRADOR' ? '/admin/inicio' : '/recepcion/inicio');
       }, 1000);
     } catch (err) {
       console.error('Error al guardar presupuesto:', err);
@@ -130,10 +146,10 @@ export default function PresupuestoOrdenPage() {
           No se encontró la orden solicitada (#{orderId}).
         </p>
         <button
-          onClick={() => router.push('/recepcion/inicio')}
+          onClick={() => router.push(userRole === 'ADMINISTRADOR' ? '/admin/inicio' : '/recepcion/inicio')}
           className="px-5 py-2.5 bg-navy text-white text-xs font-bold rounded-xl"
         >
-          Volver al Inicio
+          {userRole === 'ADMINISTRADOR' ? 'Volver al Panel de Gerencia' : 'Volver al Inicio'}
         </button>
       </div>
     );
@@ -157,11 +173,11 @@ export default function PresupuestoOrdenPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/80 pb-4">
         <button
           type="button"
-          onClick={() => router.push('/recepcion/inicio')}
+          onClick={() => router.push(userRole === 'ADMINISTRADOR' ? '/admin/inicio' : '/recepcion/inicio')}
           className="inline-flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-gray-900 bg-white hover:bg-slate-50 px-3.5 py-2 rounded-xl border border-slate-200 shadow-xs transition-all cursor-pointer"
         >
           <ArrowLeft size={15} />
-          <span>Volver al Tablero de Recepción</span>
+          <span>{userRole === 'ADMINISTRADOR' ? 'Volver al Panel de Gerencia' : 'Volver al Tablero de Recepción'}</span>
         </button>
 
         <div className="flex items-center gap-2">

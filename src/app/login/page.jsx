@@ -57,13 +57,40 @@ function LoginForm() {
 
       setSuccessMessage('¡Autenticación exitosa! Ingresando al sistema...');
       
-      const userRole = data?.data?.user?.rol;
-      let targetPath = fromPath && fromPath !== '/' && fromPath !== '/login' ? fromPath : null;
-      if (!targetPath) {
-        if (userRole === 'ADMINISTRADOR') targetPath = '/admin/inicio';
-        else if (userRole === 'RECEPCION') targetPath = '/recepcion/inicio';
-        else if (userRole === 'TECNICO') targetPath = '/tecnico/inicio';
-        else targetPath = '/admin/inicio';
+      const user = data?.data?.user;
+      const userRole = user?.rol;
+
+      // Guardar usuario en caché local para inicialización inmediata en layouts y cabeceras
+      try {
+        if (user) {
+          localStorage.setItem('america_user', JSON.stringify(user));
+          localStorage.setItem('america_user_role', userRole || '');
+        }
+      } catch (e) {}
+
+      // Lógica de redirección blindada según rol:
+      let targetPath = null;
+      if (userRole === 'ADMINISTRADOR') {
+        // Un administrador SIEMPRE va a /admin/inicio a menos que provenga explícitamente de una subruta de /admin
+        if (fromPath && fromPath.startsWith('/admin')) {
+          targetPath = fromPath;
+        } else {
+          targetPath = '/admin/inicio';
+        }
+      } else if (userRole === 'RECEPCION') {
+        if (fromPath && fromPath.startsWith('/recepcion') && fromPath !== '/recepcion/inicio') {
+          targetPath = fromPath;
+        } else {
+          targetPath = '/recepcion/inicio';
+        }
+      } else if (userRole === 'TECNICO') {
+        if (fromPath && (fromPath.startsWith('/tecnico') || fromPath.startsWith('/movil'))) {
+          targetPath = fromPath;
+        } else {
+          targetPath = '/tecnico/inicio';
+        }
+      } else {
+        targetPath = '/admin/inicio';
       }
 
       // Navegación completa para que el navegador adjunte la cookie de sesión de inmediato

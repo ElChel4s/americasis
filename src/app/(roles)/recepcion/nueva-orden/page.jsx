@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Send, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import Step1Reception from '@/components/orders/Step1Reception';
@@ -31,6 +31,23 @@ export default function NuevaOrdenPage() {
   const [activeEquipoIndex, setActiveEquipoIndex] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [userRole, setUserRole] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('america_user_role') || '';
+    }
+    return '';
+  });
+
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then(r => r.json())
+      .then(j => {
+        if (j.success && j.data?.rol) {
+          setUserRole(j.data.rol);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const [formData, setFormData] = useState({
     cliente: '',
@@ -156,9 +173,8 @@ export default function NuevaOrdenPage() {
       }
 
       console.log('Orden guardada exitosamente:', savedOrder);
-      alert(`¡Orden #${savedOrder.numero_orden || payload.ordenServicio} registrada exitosamente!\nLos radios han sido derivados a la mesa de trabajo del técnico.`);
-      
-      router.push('/recepcion/inicio');
+      const returnUrl = userRole === 'ADMINISTRADOR' ? '/admin/inicio' : '/recepcion/inicio';
+      router.push(returnUrl);
     } catch (error) {
       console.error("Error al guardar la orden:", error);
       const errMsg = error.message || "Error desconocido";
@@ -168,17 +184,19 @@ export default function NuevaOrdenPage() {
     }
   };
 
+  const returnUrl = userRole === 'ADMINISTRADOR' ? '/admin/inicio' : '/recepcion/inicio';
+
   return (
     <div className="space-y-6 pb-20 font-sans">
       {/* Barra Superior de Retorno */}
       <div className="flex items-center justify-between border-b border-slate-200/80 pb-4">
         <button
           type="button"
-          onClick={() => router.push('/recepcion/inicio')}
+          onClick={() => router.push(returnUrl)}
           className="inline-flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-gray-900 bg-white hover:bg-slate-50 px-3.5 py-2 rounded-xl border border-slate-200 shadow-xs transition-all cursor-pointer"
         >
           <ArrowLeft size={15} />
-          <span>Volver al Tablero de Recepción</span>
+          <span>{userRole === 'ADMINISTRADOR' ? 'Volver al Panel de Gerencia' : 'Volver al Tablero de Recepción'}</span>
         </button>
 
         <span className="text-xs font-mono font-bold text-[#E30613] bg-red-50 border border-red-200 px-3 py-1 rounded-xl">

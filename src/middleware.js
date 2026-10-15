@@ -69,6 +69,11 @@ export async function middleware(request) {
 
     // Proteger /recepcion/*
     if (pathname.startsWith('/recepcion')) {
+      // Si un administrador navega al inicio de recepción, redirigirlo a su propio panel ejecutivo de gerencia
+      if (pathname === '/recepcion/inicio' && rol === 'ADMINISTRADOR') {
+        return NextResponse.redirect(new URL('/admin/inicio', request.url));
+      }
+
       if (rol !== 'RECEPCION' && rol !== 'ADMINISTRADOR') {
         const target = rol === 'TECNICO' ? '/tecnico/inicio' : '/admin/inicio';
         return NextResponse.redirect(new URL(target, request.url));
@@ -77,6 +82,11 @@ export async function middleware(request) {
 
     // Proteger /tecnico/*
     if (pathname.startsWith('/tecnico')) {
+      // Si un administrador navega al inicio de técnico, redirigirlo a su propio panel ejecutivo de gerencia
+      if (pathname === '/tecnico/inicio' && rol === 'ADMINISTRADOR') {
+        return NextResponse.redirect(new URL('/admin/inicio', request.url));
+      }
+
       if (rol !== 'TECNICO' && rol !== 'ADMINISTRADOR') {
         const target = rol === 'RECEPCION' ? '/recepcion/inicio' : '/admin/inicio';
         return NextResponse.redirect(new URL(target, request.url));

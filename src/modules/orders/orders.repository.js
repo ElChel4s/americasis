@@ -628,7 +628,7 @@ export const OrdersRepository = {
       try {
         let queryBuilder = supabase
           .from('ordenes_servicio')
-          .select('*, clientes (razon_social, nit_ci), orden_equipos (*)')
+          .select('*, clientes (razon_social, nit_ci), orden_equipos:orden_equipos!orden_equipos_orden_id_fkey (*)')
           .not('estado', 'in', '("ENTREGADO","ANULADO")')
           .order('creado_en', { ascending: false });
 

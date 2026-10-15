@@ -35,20 +35,20 @@ export default function AdminDashboard({ onNewOrder }) {
   const [selectedTechnicianId, setSelectedTechnicianId] = useState('');
   const [isAssigning, setIsAssigning] = useState(false);
 
-  const fetchOrders = async () => {
+  const fetchOrders = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const data = await OrdersService.getOrders();
       setOrders(Array.isArray(data) ? data : []);
     } catch (err) {
       console.warn('Error al cargar órdenes de gerencia:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchOrders();
+    fetchOrders(false);
 
     OrdersService.getTechnicians().then(list => {
       setTechnicians(Array.isArray(list) ? list : []);
@@ -56,13 +56,26 @@ export default function AdminDashboard({ onNewOrder }) {
       console.warn('Error al cargar técnicos en admin:', err);
     });
 
+    // Auto-sincronización silenciosa y discreta en segundo plano cada 10 segundos
+    const syncInterval = setInterval(() => {
+      fetchOrders(true);
+    }, 10000);
+
+    // Sincronizar de inmediato cuando la pestaña recupera el foco
+    const handleFocus = () => {
+      fetchOrders(true);
+    };
+    window.addEventListener('focus', handleFocus);
+
     const handleOrdersUpdated = () => {
-      fetchOrders();
+      fetchOrders(true);
     };
 
     window.addEventListener('america_orders_updated', handleOrdersUpdated);
     window.addEventListener('storage', handleOrdersUpdated);
     return () => {
+      clearInterval(syncInterval);
+      window.removeEventListener('focus', handleFocus);
       window.removeEventListener('america_orders_updated', handleOrdersUpdated);
       window.removeEventListener('storage', handleOrdersUpdated);
     };
@@ -289,13 +302,20 @@ export default function AdminDashboard({ onNewOrder }) {
             />
           </div>
 
-          <button
-            onClick={fetchOrders}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-bold text-gray-600 hover:bg-slate-50 transition-colors cursor-pointer shrink-0"
-          >
-            <RefreshCw size={14} className={loading ? 'animate-spin text-red-600' : ''} />
-            <span>Refrescar Lista</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold shrink-0" title="Conexión en vivo con Supabase Cloud">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Nube en vivo</span>
+            </div>
+
+            <button
+              onClick={() => fetchOrders(false)}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-bold text-gray-600 hover:bg-slate-50 transition-colors cursor-pointer shrink-0"
+            >
+              <RefreshCw size={14} className={loading ? 'animate-spin text-red-600' : ''} />
+              <span>Refrescar</span>
+            </button>
+          </div>
         </div>
 
         {/* Filtros de Estado */}

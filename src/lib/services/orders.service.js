@@ -177,24 +177,31 @@ export const OrdersService = {
           const merged = [];
           const seenKeys = new Set();
 
-          // Respetar primero el orden local reciente
+          // Las órdenes del servidor son la fuente de verdad primaria
+          for (const so of result.data) {
+            const key = String(so.id || so.numero_orden);
+            seenKeys.add(key);
+            merged.push(so);
+          }
+
+          // Añadir órdenes locales que aún no hayan sido sincronizadas
           for (const lo of orders) {
             const key = String(lo.id || lo.numero_orden);
-            seenKeys.add(key);
-            if (serverMap.has(key)) {
-              merged.push({ ...lo, ...serverMap.get(key) });
-            } else {
+            if (!seenKeys.has(key)) {
               merged.push(lo);
+              // Si tiene un ID temporal, subirla silenciosamente a Supabase en segundo plano
+              if (String(lo.id).length < 25 || !String(lo.id).includes('-')) {
+                OrdersService.syncLocalOrderToServer(lo).catch(() => {});
+              }
             }
           }
 
-          // Añadir las del servidor que no estaban en local
-          for (const so of result.data) {
-            const key = String(so.id || so.numero_orden);
-            if (!seenKeys.has(key)) {
-              merged.push(so);
-            }
-          }
+          // Ordenar siempre cronológicamente descendente (lo más reciente arriba)
+          merged.sort((a, b) => {
+            const timeA = new Date(a.creado_en || a.createdAt || 0).getTime();
+            const timeB = new Date(b.creado_en || b.createdAt || 0).getTime();
+            return timeB - timeA;
+          });
 
           orders = merged;
           safeSaveLocalStorage(orders);
@@ -302,31 +309,9 @@ export const OrdersService = {
     inMemoryOrderImages.set(String(nuevaOrden.id), memoryImages);
     inMemoryOrderImages.set(String(nuevaOrden.numero_orden), memoryImages);
 
-    // 4. Guardar SÍ O SÍ en localStorage bajo la clave unificada 'americasis_orders'
-    const existingOrders = getStoredLocalOrders();
-    const existingIndex = existingOrders.findIndex(
-      o => String(o.id) === String(nuevaOrden.id) || String(o.numero_orden) === String(nuevaOrden.numero_orden)
-    );
-
-    let updatedOrders;
-    if (existingIndex >= 0) {
-      updatedOrders = [...existingOrders];
-      updatedOrders[existingIndex] = { ...existingOrders[existingIndex], ...nuevaOrden };
-    } else {
-      updatedOrders = [nuevaOrden, ...existingOrders];
-    }
-
-    safeSaveLocalStorage(updatedOrders);
-
-    // Log exigido por requerimiento para confirmación en consola del navegador
-    console.log("ORDEN GUARDADA CON ÉXITO:", nuevaOrden);
-
-    // Disparar reactividad inmediata a todos los componentes escuchando
-    broadcastOrdersUpdate(nuevaOrden);
-
-    // 5. Intento opcional asíncrono con el backend (sin bloquear ni desarmar lo guardado en local)
+    // 4. Guardado prioritario y obligatorio en la Base de Datos Central (Supabase / Postgres)
     try {
-      fetch('/api/orders', {
+      const res = await fetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -352,21 +337,91 @@ export const OrdersService = {
             accesorios: eq.accesorios
           }))
         })
-      })
-      .then(async (res) => {
-        if (res.ok) {
-          const json = await res.json();
-          if (json.success && json.data?.orden) {
-            console.log('[OrdersService] Orden sincronizada con éxito en backend:', json.data.orden.id);
-          }
-        }
-      })
-      .catch((e) => {
-        console.warn('[OrdersService] Backend offline o error de red, orden guardada localmente.', e.message);
       });
-    } catch (e) {}
+
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.data?.orden) {
+          const srv = json.data.orden;
+          nuevaOrden.id = srv.id;
+          nuevaOrden.numero_orden = srv.numero_orden || nuevaOrden.numero_orden;
+          nuevaOrden.ordenServicio = nuevaOrden.numero_orden;
+          if (Array.isArray(json.data.equipos) && json.data.equipos.length > 0) {
+            nuevaOrden.equipos = json.data.equipos.map((se, idx) => ({
+              ...(sanitizedEquipos[idx] || {}),
+              id: se.id,
+              orden_id: se.orden_id
+            }));
+          }
+          console.log('[OrdersService] Orden guardada y confirmada en Supabase:', srv.id, srv.numero_orden);
+        }
+      }
+    } catch (netErr) {
+      console.warn('[OrdersService] Error de red al persistir en backend central:', netErr);
+    }
+
+    // 5. Guardar en localStorage como caché rápida del navegador
+    const existingOrders = getStoredLocalOrders();
+    const cleanExisting = existingOrders.filter(
+      o => String(o.id) !== String(nuevaOrden.id) && String(o.numero_orden) !== String(nuevaOrden.numero_orden)
+    );
+    safeSaveLocalStorage([nuevaOrden, ...cleanExisting]);
+
+    // Log para confirmación en consola del navegador
+    console.log("ORDEN GUARDADA CON ÉXITO:", nuevaOrden);
+
+    // Disparar reactividad inmediata a todos los componentes escuchando
+    broadcastOrdersUpdate(nuevaOrden);
 
     return rehydrateOrder(nuevaOrden);
+  },
+
+  /**
+   * Rescata una orden creada localmente y la sube silenciosamente a la base de datos central
+   */
+  syncLocalOrderToServer: async (localOrder) => {
+    try {
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          order: {
+            sucursal_id: localOrder.sucursal_id || 'a0000000-0000-0000-0000-000000000001',
+            cliente_id: localOrder.cliente_id || null,
+            razon_social: localOrder.razon_social || localOrder.cliente || 'Consumidor Final',
+            recepcionista_nombre_manual: localOrder.recepcionista_nombre_manual || 'Recepción Mostrador',
+            usuario_tecnico_id: localOrder.usuario_tecnico_id || null,
+            tecnico_nombre_manual: localOrder.tecnico_nombre_manual || null,
+            estado: localOrder.estado || 'RECIBIDO',
+            moneda: localOrder.moneda || 'BOB',
+            tasa_cambio: localOrder.tasa_cambio || 6.96,
+            notas_internas: localOrder.notas_internas || null,
+          },
+          equipos: (localOrder.equipos || []).map(eq => ({
+            marca: eq.marca || 'Motorola',
+            modelo: eq.modelo || '',
+            numero_serie: eq.numero_serie || eq.serie || `SER-${Date.now()}`,
+            banda: eq.banda || 'VHF',
+            falla_declarada_cliente: eq.falla_declarada_cliente || '',
+            costo_servicio: eq.costo_servicio || 0,
+            accesorios: eq.accesorios || []
+          }))
+        })
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.data?.orden) {
+          console.log('[OrdersService] Orden local rescatada y sincronizada en Supabase:', json.data.orden.id);
+          const current = getStoredLocalOrders().filter(o => 
+            String(o.id) !== String(localOrder.id) && String(o.numero_orden) !== String(localOrder.numero_orden)
+          );
+          const synced = { ...localOrder, id: json.data.orden.id, numero_orden: json.data.orden.numero_orden };
+          safeSaveLocalStorage([synced, ...current]);
+          broadcastOrdersUpdate(synced);
+        }
+      }
+    } catch (e) {}
   },
 
   updateOrderStatus: async (id, status) => {

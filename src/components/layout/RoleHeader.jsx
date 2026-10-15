@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { 
-  Radio, Bell, CheckCircle2, LogOut,
+  Radio, Bell, CheckCircle2, LogOut, ArrowLeft,
   Home, List, Users, Search, PlusSquare, ClipboardList, Settings, Package, Sliders
 } from 'lucide-react';
 import UserProfileModal from '@/components/auth/UserProfileModal';
@@ -23,6 +23,26 @@ const ICON_MAP = {
   sliders: Sliders,
 };
 
+const ADMIN_NAV = [
+  { href: '/admin/inicio', label: 'Inicio', short: 'Inicio', icon: 'home' },
+  { href: '/admin/flujos', label: 'Flujos Actuales', short: 'Flujos', icon: 'list' },
+  { href: '/recepcion/catalogos', label: 'Catálogos & Fallas', short: 'Catálogos', icon: 'clipboard' },
+  { href: '/admin/personal', label: 'Personal', short: 'Personal', icon: 'users' },
+  { href: '/admin/historial', label: 'Historial', short: 'Historial', icon: 'search' },
+];
+
+const RECEPCION_NAV = [
+  { href: '/recepcion/inicio', label: 'Inicio', short: 'Inicio', icon: 'home' },
+  { href: '/recepcion/nueva-orden', label: 'Nueva Orden', short: 'Nueva', icon: 'plus' },
+  { href: '/recepcion/catalogos', label: 'Catálogos & Fallas', short: 'Catálogos', icon: 'clipboard' },
+  { href: '/recepcion/historial', label: 'Historial', short: 'Historial', icon: 'search' },
+];
+
+const TECNICO_NAV = [
+  { href: '/tecnico/inicio', label: 'Inicio', short: 'Lotes', icon: 'home' },
+  { href: '/tecnico/historial-personal', label: 'Historial Técnico', short: 'Historial', icon: 'clipboard' },
+];
+
 const initials = (name = '') =>
   name.split(' ').filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || 'US';
 
@@ -30,18 +50,41 @@ export default function RoleHeader({ navItems = [], roleTitle = 'Sistema ERP' })
   const pathname = usePathname();
   const router = useRouter();
 
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('america_user');
+        return cached ? JSON.parse(cached) : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
+
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
 
   useEffect(() => {
     fetch('/api/auth/me')
       .then(r => r.json())
-      .then(j => j.success && setUser(j.data))
+      .then(j => {
+        if (j.success && j.data) {
+          setUser(j.data);
+          try {
+            localStorage.setItem('america_user', JSON.stringify(j.data));
+            localStorage.setItem('america_user_role', j.data.rol || '');
+          } catch {}
+        }
+      })
       .catch(() => {});
   }, []);
 
   const handleLogout = async () => {
+    try {
+      localStorage.removeItem('america_user');
+      localStorage.removeItem('america_user_role');
+    } catch {}
     await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
     window.location.href = '/login';
   };
@@ -50,6 +93,30 @@ export default function RoleHeader({ navItems = [], roleTitle = 'Sistema ERP' })
     setToastMessage('Contraseña cambiada con éxito');
     setTimeout(() => setToastMessage(''), 4000);
   };
+
+  // Determinar los ítems de navegación y título según el rol real del usuario autenticado
+  const userRole = user?.rol;
+  let effectiveRoleTitle = roleTitle;
+  let effectiveNavItems = navItems;
+  let homeLink = '/login';
+
+  if (userRole === 'ADMINISTRADOR') {
+    effectiveRoleTitle = 'Gerencia General';
+    effectiveNavItems = ADMIN_NAV;
+    homeLink = '/admin/inicio';
+  } else if (userRole === 'RECEPCION') {
+    effectiveRoleTitle = 'Mostrador & Recepción';
+    effectiveNavItems = RECEPCION_NAV;
+    homeLink = '/recepcion/inicio';
+  } else if (userRole === 'TECNICO') {
+    effectiveRoleTitle = 'Laboratorio RF';
+    effectiveNavItems = TECNICO_NAV;
+    homeLink = '/tecnico/inicio';
+  } else {
+    if (roleTitle.includes('Gerencia')) homeLink = '/admin/inicio';
+    else if (roleTitle.includes('Mostrador')) homeLink = '/recepcion/inicio';
+    else if (roleTitle.includes('Laboratorio')) homeLink = '/tecnico/inicio';
+  }
 
   const isActive = (href) => {
     if (href.endsWith('/inicio')) return pathname === href;
@@ -67,24 +134,44 @@ export default function RoleHeader({ navItems = [], roleTitle = 'Sistema ERP' })
       )}
 
       <div className="mx-auto px-4 sm:px-6 h-16 sm:h-[68px] flex items-center justify-between gap-4 max-w-7xl">
-        {/* Logo */}
+        {/* Logo & Identidad con enlace al inicio propio del rol */}
         <div className="flex items-center gap-3 shrink-0">
-          <div className="bg-gradient-to-br from-red-600 to-red-700 p-2 rounded-xl shadow-lg shadow-red-600/20">
-            <Radio className="text-white" size={22} />
-          </div>
-          <div>
-            <h1 className="font-black text-xl leading-none tracking-tight text-gray-900">
-              AMERICA<span className="text-[#E30613]">SIS</span>
-            </h1>
-            <p className="text-[9px] sm:text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-0.5">
-              {roleTitle}
-            </p>
-          </div>
+          <Link 
+            href={homeLink}
+            className="flex items-center gap-3 group hover:opacity-95 transition-opacity"
+            title="Ir al inicio principal"
+          >
+            <div className="bg-gradient-to-br from-red-600 to-red-700 p-2 rounded-xl shadow-lg shadow-red-600/20 group-hover:scale-105 transition-transform">
+              <Radio className="text-white" size={22} />
+            </div>
+            <div>
+              <h1 className="font-black text-xl leading-none tracking-tight text-gray-900">
+                AMERICA<span className="text-[#E30613]">SIS</span>
+              </h1>
+              <p className="text-[9px] sm:text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-0.5">
+                {effectiveRoleTitle}
+              </p>
+            </div>
+          </Link>
+
+          {/* Botón de acceso directo al Panel de Gerencia cuando el Admin está en vistas operativas */}
+          {userRole === 'ADMINISTRADOR' && !pathname.startsWith('/admin') && (
+            <Link
+              href="/admin/inicio"
+              id="btn-header-back-to-admin"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 ml-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-xs transition-all cursor-pointer animate-in fade-in"
+              title="Regresar al panel ejecutivo de Gerencia General"
+            >
+              <ArrowLeft size={14} className="text-[#E30613]" />
+              <span className="hidden sm:inline">Panel de Gerencia</span>
+              <span className="sm:hidden">Gerencia</span>
+            </Link>
+          )}
         </div>
 
-        {/* Navigation */}
-        <nav className="hidden xl:flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl">
-          {navItems.map(({ href, label, short, icon: Icon, iconName }) => {
+        {/* Navigation adaptada al rol del usuario */}
+        <nav className="hidden lg:flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl">
+          {effectiveNavItems.map(({ href, label, short, icon: Icon, iconName }) => {
             const ResolvedIcon = typeof Icon === 'string'
               ? ICON_MAP[Icon.toLowerCase()]
               : (Icon || (iconName ? ICON_MAP[iconName.toLowerCase()] : null));
@@ -117,7 +204,7 @@ export default function RoleHeader({ navItems = [], roleTitle = 'Sistema ERP' })
                 {user?.nombre_completo || 'Cargando...'}
               </span>
               <span className="text-[10px] font-semibold text-gray-500">
-                {user?.rol || 'Sesión'}
+                {userRole || 'Sesión'}
               </span>
             </div>
           </div>

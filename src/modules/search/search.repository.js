@@ -267,7 +267,7 @@ export const SearchRepository = {
       try {
         let q = supabase
           .from('ordenes_servicio')
-          .select('*, clientes (razon_social, nit_ci, telefono, email, persona_contacto), orden_equipos (*)', { count: 'exact' })
+          .select('*, clientes (razon_social, nit_ci, telefono, email, persona_contacto), orden_equipos:orden_equipos!orden_equipos_orden_id_fkey (*)', { count: 'exact' })
           .order('creado_en', { ascending: false });
 
         if (filters.estado && filters.estado !== 'TODOS') {
