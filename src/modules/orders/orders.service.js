@@ -127,6 +127,29 @@ export const OrdersService = {
     } catch (e) {}
 
     return result;
+  },
+
+  async updateReception(orderId, receptionData, user) {
+    const userRole = (user?.rol || '').toUpperCase();
+    if (userRole && userRole !== 'RECEPCION' && userRole !== 'ADMINISTRADOR') {
+      throw new Error('Permiso denegado: solo personal de Recepción y Administradores pueden editar la recepción de la orden.');
+    }
+
+    const result = await OrdersRepository.updateReception(orderId, receptionData);
+
+    try {
+      await logAudit({
+        ordenId: typeof orderId === 'string' && orderId.length > 20 ? orderId : parseInt(orderId, 10),
+        usuarioId: user?.id || null,
+        usuarioNombre: user?.nombre_completo || receptionData.recepcionista_nombre_manual || 'Personal Recepción/Admin',
+        usuarioRol: user?.rol || 'RECEPCION',
+        accion: 'EDITAR_RECEPCION',
+        estadoNuevo: null,
+        detalleCambio: `Recepción actualizada. Cliente: ${receptionData.razon_social || receptionData.cliente || 'Actualizado'}, Equipos: ${(receptionData.equipos || []).length}`
+      });
+    } catch (e) {}
+
+    return result;
   }
 };
 

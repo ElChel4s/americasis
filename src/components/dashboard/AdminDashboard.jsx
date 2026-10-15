@@ -443,7 +443,18 @@ export default function AdminDashboard({ onNewOrder }) {
                         {formatCurrency(ord.sumatoria_total || 0, ord.moneda || 'BOB')}
                       </td>
                       <td className="py-3.5 px-4 sm:px-6 text-right">
-                        <div className="flex items-center justify-end gap-2">
+                        <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                          {/* Botón 0: Recepción & Ingreso */}
+                          <button
+                            type="button"
+                            onClick={() => router.push(`/recepcion/orden/${ord.id}/recepcion`)}
+                            className="px-2.5 py-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-[11px] flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
+                            title="Editar datos de recepción, cliente, handies y accesorios"
+                          >
+                            <Radio size={13} className="text-[#E30613]" />
+                            <span>Recepción</span>
+                          </button>
+
                           {/* Botón 1: Mesa Técnica */}
                           <button
                             type="button"

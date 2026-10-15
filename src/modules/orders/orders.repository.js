@@ -829,6 +829,245 @@ export const OrdersRepository = {
     } catch (err) {
       return { id: orderId, ...fieldsToUpdate };
     }
+  },
+
+  /**
+   * Actualiza datos de recepción (Fase 1: Ingreso): cliente, equipos y accesorios
+   */
+  async updateReception(orderId, receptionData) {
+    if (supabase) {
+      try {
+        const resolvedOrderId = await this.resolveOrderUuid(orderId);
+        if (!resolvedOrderId) throw new Error(`Orden #${orderId} no encontrada`);
+
+        // 1. Obtener la orden actual para saber el cliente_id
+        const { data: ordCurrent, error: ordFindErr } = await supabase
+          .from('ordenes_servicio')
+          .select('id, cliente_id, moneda')
+          .eq('id', resolvedOrderId)
+          .single();
+
+        if (ordFindErr || !ordCurrent) {
+          throw new Error(`Error localizando orden: ${ordFindErr?.message || 'No encontrada'}`);
+        }
+
+        // 2. Actualizar cliente si existe cliente_id o crear/asociar
+        let clienteId = ordCurrent.cliente_id;
+        const razonSocial = (receptionData.razon_social || receptionData.cliente || '').trim();
+        const nitCi = receptionData.nit_ci || receptionData.nit || null;
+        const telefono = receptionData.cliente_telefono || receptionData.telefono || null;
+        const email = receptionData.cliente_email || receptionData.email || null;
+        const direccion = receptionData.cliente_direccion || receptionData.direccion || null;
+        const personaContacto = receptionData.persona_contacto || null;
+
+        if (clienteId) {
+          const clientUpdates = {
+            actualizado_en: new Date().toISOString()
+          };
+          if (razonSocial) clientUpdates.razon_social = razonSocial;
+          if (nitCi !== undefined) clientUpdates.nit_ci = nitCi;
+          if (telefono !== undefined) clientUpdates.telefono = telefono;
+          if (email !== undefined) clientUpdates.email = email;
+          if (direccion !== undefined) clientUpdates.direccion = direccion;
+          if (personaContacto !== undefined) clientUpdates.persona_contacto = personaContacto;
+
+          await supabase.from('clientes').update(clientUpdates).eq('id', clienteId);
+        } else if (razonSocial) {
+          const { data: newClient } = await supabase
+            .from('clientes')
+            .insert({
+              razon_social: razonSocial,
+              nit_ci: nitCi,
+              telefono: telefono,
+              email: email,
+              direccion: direccion,
+              persona_contacto: personaContacto
+            })
+            .select('id')
+            .single();
+          if (newClient?.id) {
+            clienteId = newClient.id;
+          }
+        }
+
+        // 3. Actualizar ordenes_servicio
+        const orderUpdates = {
+          actualizado_en: new Date().toISOString()
+        };
+        if (clienteId) orderUpdates.cliente_id = clienteId;
+        if (receptionData.moneda) orderUpdates.moneda = receptionData.moneda;
+        if (receptionData.tasa_cambio) orderUpdates.tasa_cambio = receptionData.tasa_cambio;
+        if (receptionData.recepcionista_nombre_manual !== undefined) {
+          orderUpdates.recepcionista_nombre_manual = receptionData.recepcionista_nombre_manual;
+        }
+        if (receptionData.usuario_tecnico_id !== undefined) {
+          orderUpdates.usuario_tecnico_id = receptionData.usuario_tecnico_id || null;
+        }
+        if (receptionData.tecnico_nombre_manual !== undefined) {
+          orderUpdates.tecnico_nombre_manual = receptionData.tecnico_nombre_manual || null;
+        }
+        if (receptionData.notas_internas !== undefined) {
+          orderUpdates.notas_internas = receptionData.notas_internas;
+        }
+        if (receptionData.numero_orden) {
+          orderUpdates.numero_orden = receptionData.numero_orden;
+        }
+
+        await supabase
+          .from('ordenes_servicio')
+          .update(orderUpdates)
+          .eq('id', resolvedOrderId);
+
+        // 4. Actualizar equipos y sus accesorios
+        if (Array.isArray(receptionData.equipos) && receptionData.equipos.length > 0) {
+          const { data: existingEquipos } = await supabase
+            .from('orden_equipos')
+            .select('id, orden_indice')
+            .eq('orden_id', resolvedOrderId);
+
+          const existingMap = new Map((existingEquipos || []).map(e => [String(e.id), e]));
+          const incomingIds = new Set();
+
+          for (let i = 0; i < receptionData.equipos.length; i++) {
+            const eq = receptionData.equipos[i];
+            const serie = (eq.serie || eq.numero_serie || `SER-${Date.now()}-${i}`).toUpperCase().trim();
+            const eqIdStr = String(eq.id || '');
+            let savedEqId = null;
+
+            if (existingMap.has(eqIdStr)) {
+              incomingIds.add(eqIdStr);
+              savedEqId = eqIdStr;
+              await supabase
+                .from('orden_equipos')
+                .update({
+                  orden_indice: i + 1,
+                  marca: eq.marca || 'Motorola',
+                  modelo: eq.modelo || '',
+                  numero_serie: serie,
+                  banda: eq.banda || 'VHF',
+                  falla_declarada_cliente: eq.falla_declarada_cliente || '',
+                  actualizado_en: new Date().toISOString()
+                })
+                .eq('id', savedEqId);
+            } else {
+              const { data: newEq, error: newEqErr } = await supabase
+                .from('orden_equipos')
+                .insert({
+                  orden_id: resolvedOrderId,
+                  orden_indice: i + 1,
+                  marca: eq.marca || 'Motorola',
+                  modelo: eq.modelo || '',
+                  numero_serie: serie,
+                  banda: eq.banda || 'VHF',
+                  estado_individual: 'RECIBIDO',
+                  falla_declarada_cliente: eq.falla_declarada_cliente || '',
+                  costo_servicio: 0,
+                  reparacion_rechazada: false
+                })
+                .select('id')
+                .single();
+
+              if (!newEqErr && newEq) {
+                savedEqId = newEq.id;
+                incomingIds.add(String(newEq.id));
+              }
+            }
+
+            if (savedEqId) {
+              await supabase.from('equipo_accesorios_recepcion').delete().eq('equipo_id', savedEqId);
+
+              let accList = [];
+              if (Array.isArray(eq.accesorios) && eq.accesorios.length > 0) {
+                accList = eq.accesorios;
+              } else if (eq.accesoriosRecepcion && typeof eq.accesoriosRecepcion === 'object') {
+                accList = Object.entries(eq.accesoriosRecepcion).map(([nombre, presencia]) => ({
+                  accesorio_nombre: nombre,
+                  presencia: presencia || 'CON',
+                  antena_estado: eq.antenaEstado || null,
+                  antena_modelo_sugerido: eq.antenaModelo || null,
+                  bateria_modelo: eq.bateriaModelo || null,
+                  bateria_serie: eq.bateriaSerie || null,
+                  bateria_porcentaje_carga: eq.bateriaCarga !== undefined && eq.bateriaCarga !== '' ? parseInt(eq.bateriaCarga, 10) : null,
+                  otros_descripcion: eq.otrosDescripcion || null
+                }));
+              }
+
+              if (accList.length > 0) {
+                const accRows = accList.map(acc => ({
+                  equipo_id: savedEqId,
+                  accesorio_nombre: acc.accesorio_nombre || 'Accesorio',
+                  presencia: acc.presencia || 'CON',
+                  antena_estado: acc.antena_estado || null,
+                  antena_modelo_sugerido: acc.antena_modelo_sugerido || null,
+                  bateria_modelo: acc.bateria_modelo || null,
+                  bateria_serie: acc.bateria_serie || null,
+                  bateria_porcentaje_carga: acc.bateria_porcentaje_carga !== undefined && acc.bateria_porcentaje_carga !== null ? parseInt(acc.bateria_porcentaje_carga, 10) : null,
+                  otros_descripcion: acc.otros_descripcion || null
+                }));
+                await supabase.from('equipo_accesorios_recepcion').insert(accRows);
+              }
+            }
+          }
+
+          for (const [existingId] of existingMap) {
+            if (!incomingIds.has(existingId)) {
+              await supabase.from('orden_equipos').delete().eq('id', existingId);
+            }
+          }
+        }
+
+        return await this.getOrderWithDetails(resolvedOrderId);
+      } catch (err) {
+        console.warn('[OrdersRepository] Supabase updateReception error, probando PG:', err.message);
+      }
+    }
+
+    try {
+      if (receptionData.razon_social) {
+        await query(`
+          UPDATE clientes 
+          SET razon_social = COALESCE($1, razon_social),
+              nit_ci = COALESCE($2, nit_ci),
+              telefono = COALESCE($3, telefono),
+              email = COALESCE($4, email),
+              persona_contacto = COALESCE($5, persona_contacto),
+              direccion = COALESCE($6, direccion),
+              actualizado_en = NOW()
+          WHERE id = (SELECT cliente_id FROM ordenes_servicio WHERE id = $7)
+        `, [
+          receptionData.razon_social || null,
+          receptionData.nit_ci || null,
+          receptionData.telefono || receptionData.cliente_telefono || null,
+          receptionData.email || receptionData.cliente_email || null,
+          receptionData.persona_contacto || null,
+          receptionData.direccion || receptionData.cliente_direccion || null,
+          orderId
+        ]);
+      }
+
+      await query(`
+        UPDATE ordenes_servicio
+        SET moneda = COALESCE($1, moneda),
+            recepcionista_nombre_manual = COALESCE($2, recepcionista_nombre_manual),
+            usuario_tecnico_id = COALESCE($3, usuario_tecnico_id),
+            tecnico_nombre_manual = COALESCE($4, tecnico_nombre_manual),
+            notas_internas = COALESCE($5, notas_internas),
+            actualizado_en = NOW()
+        WHERE id = $6
+      `, [
+        receptionData.moneda || null,
+        receptionData.recepcionista_nombre_manual || null,
+        receptionData.usuario_tecnico_id || null,
+        receptionData.tecnico_nombre_manual || null,
+        receptionData.notas_internas || null,
+        orderId
+      ]);
+
+      return await this.getOrderWithDetails(orderId);
+    } catch (pgErr) {
+      console.warn('[OrdersRepository] PG updateReception fallback:', pgErr.message);
+      return { id: orderId, ...receptionData };
+    }
   }
 };
 

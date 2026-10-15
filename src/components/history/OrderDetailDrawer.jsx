@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { 
   X, 
   Radio, 
@@ -43,6 +44,7 @@ export default function OrderDetailDrawer({
   onSelectSerial,
   onContinueInWizard
 }) {
+  const router = useRouter();
   const [orderDetails, setOrderDetails] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [downloadingDocx, setDownloadingDocx] = useState(false);
@@ -355,14 +357,29 @@ export default function OrderDetailDrawer({
 
           {/* PIE DE ACCIONES DEL DRAWER */}
           <div className="p-4 sm:p-5 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3 shrink-0 flex-wrap">
-            <button
-              type="button"
-              onClick={() => onContinueInWizard(currentOrder)}
-              className="btn-primary py-2.5 px-4 text-xs font-bold flex items-center gap-1.5"
-            >
-              <Wrench size={14} />
-              <span>Abrir en Taller</span>
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  router.push(`/recepcion/orden/${currentOrder.id}/recepcion`);
+                }}
+                className="py-2.5 px-3 rounded-xl border border-slate-300 text-slate-800 bg-white hover:bg-slate-100 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                title="Editar datos de recepción, cliente, equipos y accesorios"
+              >
+                <Radio size={14} className="text-[#E30613]" />
+                <span>Editar Recepción</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onContinueInWizard(currentOrder)}
+                className="btn-primary py-2.5 px-4 text-xs font-bold flex items-center gap-1.5"
+              >
+                <Wrench size={14} />
+                <span>Abrir en Taller</span>
+              </button>
+            </div>
 
             <div className="flex items-center gap-2">
               <button

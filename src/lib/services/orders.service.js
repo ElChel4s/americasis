@@ -562,6 +562,95 @@ export const OrdersService = {
   },
 
   /**
+   * Actualiza los datos de recepción (Fase 1: Ingreso)
+   * Reservado para personal de Recepción y Administradores
+   */
+  updateReception: async (orderId, receptionData) => {
+    if (typeof window === 'undefined') return null;
+
+    const sanitizedEquipos = (receptionData.equipos || []).map((eq, i) => {
+      const accs = Array.isArray(eq.accesorios) && eq.accesorios.length > 0
+        ? eq.accesorios
+        : Object.entries(eq.accesoriosRecepcion || {}).map(([nombre, presencia]) => ({
+            accesorio_nombre: nombre,
+            presencia: presencia || 'CON',
+            antena_estado: eq.antenaEstado || null,
+            antena_modelo_sugerido: eq.antenaModelo || null,
+            bateria_modelo: eq.bateriaModelo || null,
+            bateria_serie: eq.bateriaSerie || null,
+            bateria_porcentaje_carga: parseInt(eq.bateriaCarga, 10) || null,
+            otros_descripcion: eq.otrosDescripcion || null
+          }));
+
+      return {
+        ...eq,
+        orden_indice: i + 1,
+        marca: eq.marca || 'Motorola',
+        modelo: eq.modelo || '',
+        numero_serie: (eq.serie || eq.numero_serie || `SER-${Date.now()}-${i}`).toUpperCase().trim(),
+        serie: (eq.serie || eq.numero_serie || `SER-${Date.now()}-${i}`).toUpperCase().trim(),
+        banda: eq.banda || 'VHF',
+        falla_declarada_cliente: eq.falla_declarada_cliente || '',
+        accesorios: accs
+      };
+    });
+
+    const payload = {
+      reception: {
+        cliente_id: receptionData.cliente_id,
+        razon_social: receptionData.razon_social || receptionData.cliente || '',
+        cliente: receptionData.cliente || receptionData.razon_social || '',
+        nit_ci: receptionData.nit_ci || '',
+        telefono: receptionData.telefono || receptionData.cliente_telefono || '',
+        cliente_telefono: receptionData.cliente_telefono || receptionData.telefono || '',
+        email: receptionData.email || receptionData.cliente_email || '',
+        cliente_email: receptionData.cliente_email || receptionData.email || '',
+        direccion: receptionData.direccion || receptionData.cliente_direccion || '',
+        cliente_direccion: receptionData.cliente_direccion || receptionData.direccion || '',
+        persona_contacto: receptionData.persona_contacto || '',
+        moneda: receptionData.moneda || 'BOB',
+        usuario_tecnico_id: receptionData.usuario_tecnico_id || receptionData.tecnicoAsignadoId || null,
+        tecnico_nombre_manual: receptionData.tecnico_nombre_manual || receptionData.tecnicoNombre || null,
+        recepcionista_nombre_manual: receptionData.recepcionista_nombre_manual || null,
+        notas_internas: receptionData.notas_internas || null,
+        numero_orden: receptionData.numero_orden || receptionData.ordenServicio || null,
+        equipos: sanitizedEquipos
+      }
+    };
+
+    const res = await fetch(`/api/orders/${orderId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.message || 'Error al actualizar recepción');
+    }
+
+    const orders = await OrdersService.getOrders();
+    const index = orders.findIndex(o => String(o.id) === String(orderId) || String(o.numero_orden) === String(orderId));
+    if (index >= 0) {
+      orders[index] = {
+        ...orders[index],
+        ...payload.reception,
+        total_equipos: sanitizedEquipos.length,
+        equipos: sanitizedEquipos.map((eq, idx) => ({
+          ...(orders[index].equipos?.[idx] || {}),
+          ...eq
+        })),
+        updatedAt: new Date().toISOString()
+      };
+      safeSaveLocalStorage(orders);
+      broadcastOrdersUpdate(orders[index]);
+      return rehydrateOrder(orders[index]);
+    }
+
+    return null;
+  },
+
+  /**
    * Entrega y cobro de la orden
    */
   deliverOrder: async (id) => {

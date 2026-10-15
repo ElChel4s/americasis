@@ -566,6 +566,17 @@ export default function FrontDeskDashboard() {
                     <div className="flex items-center gap-1.5 flex-wrap justify-end">
                       <button
                         type="button"
+                        id={`btn-editar-recepcion-${o.id}`}
+                        onClick={() => router.push(`/recepcion/orden/${o.id}/recepcion`)}
+                        className="px-2.5 py-1.5 rounded-xl border border-red-200 bg-red-50/50 hover:bg-red-100 text-red-700 font-bold text-xs flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
+                        title="Editar datos de recepción, cliente o equipos"
+                      >
+                        <Radio size={12} className="text-[#E30613]" />
+                        <span>Editar</span>
+                      </button>
+
+                      <button
+                        type="button"
                         id={`btn-ver-datos-ingreso-${o.id}`}
                         onClick={() => setViewingProgressOrder(o)}
                         className="px-2.5 py-1.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-gray-700 font-bold text-xs flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
@@ -818,11 +829,24 @@ export default function FrontDeskDashboard() {
               ))}
             </div>
 
-            <div className="flex justify-end pt-3 border-t border-slate-100">
+            <div className="flex justify-between items-center pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  const ordId = viewingProgressOrder.id;
+                  setViewingProgressOrder(null);
+                  router.push(`/recepcion/orden/${ordId}/recepcion`);
+                }}
+                className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 transition-all"
+              >
+                <Radio size={14} />
+                <span>Editar Recepción</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => setViewingProgressOrder(null)}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-gray-700 font-bold text-xs rounded-xl"
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-gray-700 font-bold text-xs rounded-xl cursor-pointer"
               >
                 Cerrar
               </button>

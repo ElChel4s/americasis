@@ -48,7 +48,7 @@ export default function OrderPhaseNav({
   const getPhaseRoute = (phaseNum) => {
     switch (phaseNum) {
       case 1:
-        return `/?orden=${orderId}&paso=1`;
+        return `/recepcion/orden/${orderId}/recepcion`;
       case 2:
         return `/tecnico/diagnostico/${orderId}`;
       case 3:

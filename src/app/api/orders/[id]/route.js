@@ -27,6 +27,13 @@ export async function PUT(request, { params }) {
       return successResponse(result, 'Diagnóstico actualizado exitosamente');
     }
 
+    // 2. Si viene edición de recepción (Fase 1: Ingreso)
+    if (body.reception || body.tipo === 'RECEPCION' || body.isReceptionEdit) {
+      const receptionData = body.reception || body;
+      const result = await OrdersService.updateReception(id, receptionData, user);
+      return successResponse(result, 'Datos de recepción actualizados exitosamente');
+    }
+
     // 2. Si viene asignación de técnico, estado general, presupuesto o condiciones
     if (
       body.estado || 
