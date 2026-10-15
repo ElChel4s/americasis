@@ -1,10 +1,17 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/config/supabase-client';
 import { pool } from '@/lib/config/database';
+import { verifyAuth } from '@/lib/common/auth-guard';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request) {
+  if (process.env.NODE_ENV === 'production') {
+    const user = verifyAuth(request);
+    if (!user || user.rol !== 'ADMINISTRADOR') {
+      return NextResponse.json({ error: 'Acceso no autorizado a diagnósticos del sistema' }, { status: 401 });
+    }
+  }
   const diagnostic = {
     timestamp: new Date().toISOString(),
     supabase: {

@@ -56,33 +56,6 @@ export default function RoleHeader({ navItems = [], roleTitle = 'Sistema ERP' })
     return pathname.startsWith(href);
   };
 
-  const [isSwitching, setIsSwitching] = useState(false);
-
-  const handleSwitchRole = async (targetRole) => {
-    try {
-      setIsSwitching(true);
-      const res = await fetch('/api/auth/switch-role', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: targetRole })
-      });
-      if (res.ok) {
-        const routeMap = {
-          RECEPCION: '/recepcion/inicio',
-          TECNICO: '/tecnico/inicio',
-          ADMINISTRADOR: '/admin/inicio'
-        };
-        window.location.href = routeMap[targetRole] || '/';
-      } else {
-        alert('No se pudo cambiar de rol para pruebas');
-        setIsSwitching(false);
-      }
-    } catch (err) {
-      console.error('Error switching role:', err);
-      setIsSwitching(false);
-    }
-  };
-
   return (
     <header className="bg-white/90 backdrop-blur-xl border-b border-slate-200 sticky top-0 z-50 print:hidden">
       {/* Toast */}
@@ -107,57 +80,6 @@ export default function RoleHeader({ navItems = [], roleTitle = 'Sistema ERP' })
               {roleTitle}
             </p>
           </div>
-        </div>
-
-        {/* Switch Rápido de Usuario para Pruebas (Dev Bar) */}
-        <div className="flex items-center gap-1 bg-slate-100/90 p-1 sm:p-1.5 rounded-2xl border border-slate-200/90 shadow-xs">
-          <span className="hidden lg:inline text-[10px] font-black uppercase text-slate-400 px-1.5 sm:px-2 tracking-wider">
-            Probar como:
-          </span>
-          <button
-            type="button"
-            id="btn-switch-recepcion"
-            onClick={() => handleSwitchRole('RECEPCION')}
-            disabled={isSwitching}
-            className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl text-[11px] sm:text-xs font-black transition-all cursor-pointer flex items-center gap-1 ${
-              user?.rol === 'RECEPCION'
-                ? 'bg-red-600 text-white shadow-sm shadow-red-600/30'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white'
-            }`}
-            title="Cambiar sesión a Mostrador / Recepción"
-          >
-            <span>Recepción</span>
-          </button>
-
-          <button
-            type="button"
-            id="btn-switch-tecnico"
-            onClick={() => handleSwitchRole('TECNICO')}
-            disabled={isSwitching}
-            className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl text-[11px] sm:text-xs font-black transition-all cursor-pointer flex items-center gap-1 ${
-              user?.rol === 'TECNICO'
-                ? 'bg-[#1E293B] text-white shadow-sm'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white'
-            }`}
-            title="Cambiar sesión a Técnico de Laboratorio"
-          >
-            <span>Técnico</span>
-          </button>
-
-          <button
-            type="button"
-            id="btn-switch-admin"
-            onClick={() => handleSwitchRole('ADMINISTRADOR')}
-            disabled={isSwitching}
-            className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl text-[11px] sm:text-xs font-black transition-all cursor-pointer flex items-center gap-1 ${
-              user?.rol === 'ADMINISTRADOR'
-                ? 'bg-slate-900 text-white shadow-sm'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white'
-            }`}
-            title="Cambiar sesión a Administrador General"
-          >
-            <span>Admin</span>
-          </button>
         </div>
 
         {/* Navigation */}

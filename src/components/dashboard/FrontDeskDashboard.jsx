@@ -144,7 +144,7 @@ export default function FrontDeskDashboard() {
         </div>
       </div>
 
-      {/* Banner Didáctico para Pruebas de Flujo */}
+      {/* Banner Informativo del Flujo Operativo */}
       <div className="bg-gradient-to-r from-red-50 via-amber-50 to-orange-50 border border-red-200/80 rounded-3xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
         <div className="flex items-center gap-3">
           <span className="p-2.5 bg-[#E30613] text-white rounded-2xl shrink-0 shadow-sm shadow-red-600/30">
@@ -152,10 +152,10 @@ export default function FrontDeskDashboard() {
           </span>
           <div>
             <h4 className="text-xs font-black uppercase tracking-wider text-red-950">
-              Flujo Operativo de Pruebas
+              Control de Flujo Operativo
             </h4>
             <p className="text-xs sm:text-sm text-gray-700 font-medium mt-0.5">
-              💡 <strong>Orden registrada con éxito.</strong> Pasa a la cuenta de Técnico (<code className="bg-white/80 px-1.5 py-0.5 rounded border border-red-200 text-[#E30613] font-bold">tecnico@americasis.com</code>) o usa los botones de <strong>&quot;Probar como...&quot;</strong> en la barra superior para realizar el diagnóstico electrónico de fallas y componentes.
+              💡 <strong>Orden registrada con éxito.</strong> Los equipos ingresan en cola de laboratorio. El personal de servicio técnico debe iniciar sesión con su cuenta asignada (<code className="bg-white/80 px-1.5 py-0.5 rounded border border-red-200 text-[#E30613] font-bold">tecnico</code>) para realizar el diagnóstico electrónico de fallas y componentes.
             </p>
           </div>
         </div>

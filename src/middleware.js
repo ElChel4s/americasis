@@ -7,8 +7,8 @@ const secretKey = new TextEncoder().encode(JWT_SECRET);
 export async function middleware(request) {
   const { pathname } = request.nextUrl;
 
-  // En caso de querer desactivar auth explícitamente en desarrollo
-  if (process.env.ENABLE_AUTH === 'false') {
+  // La autenticación NUNCA se desactiva en producción
+  if (process.env.NODE_ENV !== 'production' && process.env.ENABLE_AUTH === 'false') {
     if (pathname === '/') {
       return NextResponse.redirect(new URL('/admin/inicio', request.url));
     }
