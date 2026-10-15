@@ -859,11 +859,11 @@ export default function FrontDeskDashboard() {
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => router.push(`/recepcion/orden/${deliveryModalOrder.id}/presupuesto?print=1`)}
+                  onClick={() => router.push(`/recepcion/orden/${deliveryModalOrder.id}/informe?print=1`)}
                   className="flex items-center justify-center gap-2 p-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 font-bold text-xs text-gray-800 transition-all cursor-pointer"
                 >
                   <Printer size={15} />
-                  <span>Imprimir Informe</span>
+                  <span>Imprimir Informe A4</span>
                 </button>
 
                 <button

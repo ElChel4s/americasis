@@ -74,9 +74,16 @@ export async function middleware(request) {
         return NextResponse.redirect(new URL('/admin/inicio', request.url));
       }
 
-      if (rol !== 'RECEPCION' && rol !== 'ADMINISTRADOR') {
-        const target = rol === 'TECNICO' ? '/tecnico/inicio' : '/admin/inicio';
-        return NextResponse.redirect(new URL(target, request.url));
+      // Expedientes de orden (/recepcion/orden/*) accesibles por RECEPCION, ADMINISTRADOR y TECNICO
+      if (pathname.startsWith('/recepcion/orden')) {
+        if (rol !== 'RECEPCION' && rol !== 'ADMINISTRADOR' && rol !== 'TECNICO') {
+          return NextResponse.redirect(new URL('/login', request.url));
+        }
+      } else {
+        if (rol !== 'RECEPCION' && rol !== 'ADMINISTRADOR') {
+          const target = rol === 'TECNICO' ? '/tecnico/inicio' : '/admin/inicio';
+          return NextResponse.redirect(new URL(target, request.url));
+        }
       }
     }
 

@@ -17,7 +17,6 @@ import SearchFiltersBar from '@/components/history/SearchFiltersBar';
 import OrdersTable from '@/components/history/OrdersTable';
 import SerialTimelineModal from '@/components/history/SerialTimelineModal';
 import OrderDetailDrawer from '@/components/history/OrderDetailDrawer';
-import Step4ReportPreview from '@/components/orders/Step4ReportPreview';
 
 function HistorialContent() {
   const searchParams = useSearchParams();
@@ -41,7 +40,6 @@ function HistorialContent() {
   const [selectedSerial, setSelectedSerial] = useState(searchParams.get('serie') || null);
   const [selectedOrderForDrawer, setSelectedOrderForDrawer] = useState(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [printModalOrder, setPrintModalOrder] = useState(null);
 
   // Consulta de búsqueda
   const fetchSearchResults = useCallback(async () => {
@@ -103,23 +101,10 @@ function HistorialContent() {
     setIsDrawerOpen(true);
   };
 
-  // Abrir reporte membretado en modal
-  const handleOpenPrintModal = async (ord) => {
-    if (!ord) return;
-    setPrintModalOrder(ord);
-
-    if (ord.id) {
-      try {
-        const res = await fetch(`/api/orders/${ord.id}`);
-        if (res.ok) {
-          const json = await res.json();
-          if (json.success && json.data) {
-            setPrintModalOrder(json.data);
-          }
-        }
-      } catch (err) {
-        console.warn('Error al cargar datos completos para reporte:', err);
-      }
+  // Navegar a la pantalla oficial e independiente de Fase 4 (Informe A4 / PDF)
+  const handleOpenPrintModal = (ord) => {
+    if (ord?.id) {
+      router.push(`/recepcion/orden/${ord.id}/informe`);
     }
   };
 
@@ -127,35 +112,6 @@ function HistorialContent() {
   const handleContinueInWizard = (ord) => {
     router.push(`/?orden=${ord.id}&paso=2`);
   };
-
-  // Mapear orden para Step4ReportPreview
-  const previewFormData = printModalOrder ? {
-    ...printModalOrder,
-    ordenServicio: printModalOrder.numero_orden || `OS-${String(printModalOrder.id).padStart(5, '0')}`,
-    cliente: printModalOrder.razon_social || printModalOrder.cliente || 'Consumidor Final',
-    nitCi: printModalOrder.nit_ci || '',
-    moneda: printModalOrder.moneda || 'BOB',
-    equipos: (printModalOrder.equipos || []).map((eq, i) => ({
-      ...eq,
-      id: eq.id || i,
-      marca: eq.marca || 'Motorola',
-      modelo: eq.modelo || 'DEP450',
-      serie: eq.serie || eq.numero_serie || '',
-      numero_serie: eq.numero_serie || eq.serie || '',
-      banda: eq.banda || 'VHF',
-      reparacion_rechazada: eq.reparacion_rechazada || false,
-      motivo_rechazo: eq.motivo_rechazo || '',
-      falla_declarada_cliente: eq.falla_declarada_cliente || '',
-      texto_diagnostico: eq.texto_diagnostico || '',
-      descripcion_servicio: eq.descripcion_servicio || 'Mantenimiento preventivo y calibración RF',
-      costo_servicio: parseFloat(eq.costo_servicio) || 150,
-      accesoriosRecepcion: eq.accesorios && Array.isArray(eq.accesorios)
-        ? eq.accesorios.reduce((acc, a) => { acc[a.tipo_accesorio] = a.estado_ingreso; return acc; }, {}) 
-        : (eq.accesoriosRecepcion || { 'Antena': 'CON', 'Batería': 'CON', 'Cargador': 'SIN', 'Clip': 'SIN', 'Micrófono': 'SIN', 'Otros': 'SIN' }),
-      repuestos: eq.repuestos || [],
-      fallas: eq.fallas || []
-    }))
-  } : null;
 
   return (
     <div className="space-y-6 animate-slideUp pb-12">
@@ -262,58 +218,6 @@ function HistorialContent() {
         }}
         onContinueInWizard={handleContinueInWizard}
       />
-
-      {/* MODAL DE REIMPRESIÓN OFICIAL (PDF / INFORME A4 MEMBRETADO) */}
-      {printModalOrder && previewFormData && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-navy/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 animate-fadeIn print:p-0 print:bg-white print:static print:overflow-visible">
-          <div 
-            className="bg-white w-full max-w-5xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[95vh] print:max-h-none print:h-auto print:border-none print:shadow-none print:m-0 print:w-full print:max-w-none"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Cabecera del modal de impresión */}
-            <div className="bg-slate-900 text-white p-4 sm:p-5 flex items-center justify-between border-b border-slate-800 print:hidden">
-              <div className="flex items-center gap-2">
-                <FileText size={20} className="text-red-500" />
-                <div>
-                  <h3 className="text-base font-black tracking-tight text-white">
-                    Re-generar Informe Técnico Oficial — #{previewFormData.ordenServicio}
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    {previewFormData.cliente} • Vista de impresión A4 membretada
-                  </p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setPrintModalOrder(null)}
-                className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            {/* Vista previa A4 con membrete oficial */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-100 print:p-0 print:bg-white print:overflow-visible">
-              <Step4ReportPreview
-                formData={previewFormData}
-              />
-            </div>
-
-            {/* Pie del modal */}
-            <div className="p-4 bg-white border-t border-slate-200 flex justify-end print:hidden">
-              <button
-                type="button"
-                onClick={() => setPrintModalOrder(null)}
-                className="btn-secondary py-2 px-5 text-xs font-bold cursor-pointer"
-              >
-                Cerrar Visor
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
     </div>
   );
 }

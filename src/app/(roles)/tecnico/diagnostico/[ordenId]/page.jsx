@@ -10,6 +10,7 @@ import {
 import { OrdersService } from '@/lib/services/orders.service';
 import Step2Diagnosis from '@/components/orders/Step2Diagnosis';
 import EquipmentTabs from '@/components/orders/EquipmentTabs';
+import OrderPhaseNav from '@/components/orders/OrderPhaseNav';
 
 export default function TecnicoDiagnosticoMesaPage() {
   const params = useParams();
@@ -289,6 +290,16 @@ export default function TecnicoDiagnosticoMesaPage() {
           </span>
         </div>
       </div>
+
+      {/* Barra de Navegación de Fases Independientes */}
+      <OrderPhaseNav
+        orderId={order.id}
+        currentPhase={2}
+        orderNumber={order.numero_orden}
+        clientName={order.razon_social}
+        status={order.estado}
+        userRole={currentUser?.rol}
+      />
 
       {/* Pestañas por handy del lote */}
       <EquipmentTabs

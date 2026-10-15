@@ -5,11 +5,11 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import {
   ArrowLeft, Wrench, ShieldCheck, Printer, FileDown,
   Save, CheckCircle2, AlertCircle, Loader2, Sparkles,
-  Eye, Check, Radio, Package, DollarSign, X
+  Eye, Check, Radio, Package, DollarSign
 } from 'lucide-react';
 import { OrdersService } from '@/lib/services/orders.service';
 import Step3Budget from '@/components/orders/Step3Budget';
-import Step4ReportPreview from '@/components/orders/Step4ReportPreview';
+import OrderPhaseNav from '@/components/orders/OrderPhaseNav';
 import { generateDocxBlob } from '@/lib/utils/docxExport';
 import { formatCurrency, normalizeCurrency } from '@/lib/utils/currencyFormat';
 
@@ -26,7 +26,6 @@ function PresupuestoOrdenContent() {
   const [isSaving, setIsSaving] = useState(false);
   const [feedback, setFeedback] = useState(null);
   const [userRole, setUserRole] = useState('');
-  const [showPreviewModal, setShowPreviewModal] = useState(false);
 
   useEffect(() => {
     try {
@@ -44,20 +43,24 @@ function PresupuestoOrdenContent() {
       .catch(() => {});
   }, []);
 
-  // Cargar orden
+  // Cargar orden (si es autoPrint, redirigir directo a la pantalla de informe A4)
   useEffect(() => {
+    if (autoPrint) {
+      router.replace(`/recepcion/orden/${orderId}/informe?print=1`);
+      return;
+    }
+
     let isMounted = true;
     OrdersService.getOrderById(orderId).then(data => {
       if (isMounted) {
         if (data) {
           setOrder(data);
-          if (autoPrint) setShowPreviewModal(true);
         }
         setLoading(false);
       }
     });
     return () => { isMounted = false; };
-  }, [orderId, autoPrint]);
+  }, [orderId, autoPrint, router]);
 
   const updateForm = (updates) => {
     setOrder(prev => ({ ...prev, ...updates }));
@@ -191,6 +194,16 @@ function PresupuestoOrdenContent() {
         </div>
       </div>
 
+      {/* 2. Barra de Navegación de Fases Independientes */}
+      <OrderPhaseNav
+        orderId={order.id}
+        currentPhase={3}
+        orderNumber={order.numero_orden}
+        clientName={order.razon_social}
+        status={order.estado}
+        userRole={userRole}
+      />
+
       {/* ============================================================== */}
       {/* SECCIÓN SUPERIOR: DIAGNÓSTICO DEL TÉCNICO EN MODO LECTURA */}
       {/* ============================================================== */}
@@ -218,7 +231,7 @@ function PresupuestoOrdenContent() {
             title="Abrir mesa de trabajo para ver o modificar fallas y repuestos"
           >
             <Wrench size={13} className="text-[#E30613]" />
-            <span>Editar Diagnóstico Técnico</span>
+            <span>Editar Diagnóstico Técnico (Fase 2)</span>
           </button>
         </div>
 
@@ -297,20 +310,21 @@ function PresupuestoOrdenContent() {
             Emisión y Cierre de Cotización
           </h4>
           <p className="text-xs text-gray-500">
-            Imprima la proforma oficial, descargue el archivo Word o confirme el presupuesto.
+            Pase a la pantalla del informe A4 o confirme el presupuesto para actualizar el estado.
           </p>
         </div>
 
         <div className="flex items-center gap-2.5 w-full md:w-auto flex-wrap sm:flex-nowrap">
-          {/* Botón: [ Ver / Imprimir Informe A4 ] */}
+          {/* Botón directo a Pantalla Fase 4: Informe A4 / PDF */}
           <button
             type="button"
-            id="btn-ver-informe-a4"
-            onClick={() => setShowPreviewModal(true)}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-3 bg-white hover:bg-slate-50 border border-slate-300 font-bold text-xs sm:text-sm text-gray-800 rounded-xl shadow-xs transition-all cursor-pointer"
+            id="btn-ir-informe-a4"
+            onClick={() => router.push(`/recepcion/orden/${order.id}/informe`)}
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-3 bg-white hover:bg-slate-50 border border-slate-300 font-bold text-xs sm:text-sm text-gray-800 rounded-xl shadow-xs transition-all cursor-pointer"
+            title="Ir a la pantalla oficial e independiente de Fase 4"
           >
             <Printer size={16} className="text-[#E30613]" />
-            <span>Ver / Imprimir Informe A4</span>
+            <span>Ver Informe A4 / PDF (Fase 4)</span>
           </button>
 
           {/* Botón: [ Descargar Word .docx ] */}
@@ -346,54 +360,6 @@ function PresupuestoOrdenContent() {
           </button>
         </div>
       </div>
-
-      {/* MODAL DE VISTA PREVIA COMPLETA A4 PARA IMPRIMIR */}
-      {showPreviewModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-start p-2 sm:p-4 overflow-y-auto print:p-0 print:bg-white print:static print:overflow-visible">
-          <div className="w-full max-w-5xl bg-slate-100 rounded-3xl p-4 sm:p-6 space-y-4 shadow-2xl relative my-6 print:m-0 print:p-0 print:bg-white print:shadow-none print:w-full print:max-w-none">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200 bg-white p-4 rounded-2xl print:hidden">
-              <div>
-                <h3 className="font-black text-base text-gray-900">
-                  Vista Previa del Informe Oficial — Orden #{order.numero_orden || order.id}
-                </h3>
-                <p className="text-xs text-gray-500">
-                  Documento formal A4 listo para imprimir o guardar como PDF oficial.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer transition-all"
-                >
-                  <Printer size={15} />
-                  <span>Imprimir Ahora</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setShowPreviewModal(false)}
-                  className="p-2 rounded-xl text-gray-400 hover:bg-slate-100 hover:text-gray-700 cursor-pointer transition-colors"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-            </div>
-
-            {/* Componente A4 Report Preview */}
-            <Step4ReportPreview
-              formData={{
-                ...order,
-                cliente: order.razon_social || order.cliente || '',
-                ordenServicio: order.numero_orden || (order.id ? `OS-${String(order.id).padStart(5, '0')}` : ''),
-                nitCi: order.nit_ci || order.nitCi || ''
-              }}
-              updateForm={updateForm}
-            />
-          </div>
-        </div>
-      )}
     </div>
   );
 }
