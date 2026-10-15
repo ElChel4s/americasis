@@ -117,6 +117,8 @@ export default function FrontDeskDashboard() {
     }
   };
 
+  const [tallerTechFilter, setTallerTechFilter] = useState('ALL'); // 'ALL' | 'UNASSIGNED' | 'ASSIGNED'
+
   // 1. Filtrado de órdenes por columna del ciclo operativo
   // Columna 1: En Taller (RECIBIDO, PENDIENTE_DIAGNOSTICO o EN_DIAGNOSTICO)
   const ordersEnTaller = useMemo(() => {
@@ -127,6 +129,24 @@ export default function FrontDeskDashboard() {
       !o.estado
     );
   }, [orders]);
+
+  const unassignedEnTallerCount = useMemo(() => {
+    return ordersEnTaller.filter(o => !o.tecnico_nombre_manual && !o.usuario_tecnico_id).length;
+  }, [ordersEnTaller]);
+
+  const assignedEnTallerCount = useMemo(() => {
+    return ordersEnTaller.filter(o => Boolean(o.tecnico_nombre_manual || o.usuario_tecnico_id)).length;
+  }, [ordersEnTaller]);
+
+  const filteredOrdersEnTaller = useMemo(() => {
+    if (tallerTechFilter === 'UNASSIGNED') {
+      return ordersEnTaller.filter(o => !o.tecnico_nombre_manual && !o.usuario_tecnico_id);
+    }
+    if (tallerTechFilter === 'ASSIGNED') {
+      return ordersEnTaller.filter(o => Boolean(o.tecnico_nombre_manual || o.usuario_tecnico_id));
+    }
+    return ordersEnTaller;
+  }, [ordersEnTaller, tallerTechFilter]);
 
   // Columna 2: Por Cotizar (DIAGNOSTICADO)
   const ordersPorCotizar = useMemo(() => {
@@ -358,16 +378,63 @@ export default function FrontDeskDashboard() {
             </span>
           </div>
 
+          {/* Sub-Filtro Rápido de Asignación UX/UI */}
+          <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100/90 rounded-2xl text-[11px] font-bold">
+            <button
+              type="button"
+              onClick={() => setTallerTechFilter('ALL')}
+              className={`py-1.5 px-2 rounded-xl transition-all text-center cursor-pointer ${
+                tallerTechFilter === 'ALL'
+                  ? 'bg-white text-gray-900 shadow-xs'
+                  : 'text-gray-500 hover:text-gray-800'
+              }`}
+            >
+              Todos ({ordersEnTaller.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setTallerTechFilter('UNASSIGNED')}
+              className={`py-1.5 px-2 rounded-xl transition-all text-center cursor-pointer flex items-center justify-center gap-1 ${
+                tallerTechFilter === 'UNASSIGNED'
+                  ? 'bg-amber-100 text-amber-950 font-black shadow-xs'
+                  : 'text-amber-800 hover:text-amber-950'
+              }`}
+            >
+              <span>⚠️ Sin Técnico</span>
+              <span className="text-[10px] bg-amber-200 px-1.5 py-0.2 rounded-full font-black">
+                {unassignedEnTallerCount}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTallerTechFilter('ASSIGNED')}
+              className={`py-1.5 px-2 rounded-xl transition-all text-center cursor-pointer flex items-center justify-center gap-1 ${
+                tallerTechFilter === 'ASSIGNED'
+                  ? 'bg-emerald-100 text-emerald-950 font-black shadow-xs'
+                  : 'text-emerald-800 hover:text-emerald-950'
+              }`}
+            >
+              <span>🟢 Asignados</span>
+              <span className="text-[10px] bg-emerald-200 px-1.5 py-0.2 rounded-full font-black">
+                {assignedEnTallerCount}
+              </span>
+            </button>
+          </div>
+
           <div className="space-y-3 flex-1 overflow-y-auto max-h-[600px] pr-1">
-            {ordersEnTaller.length === 0 ? (
+            {filteredOrdersEnTaller.length === 0 ? (
               <div className="py-12 text-center text-gray-400 text-xs">
-                No hay órdenes pendientes en mesa técnica.
+                {tallerTechFilter === 'UNASSIGNED'
+                  ? '¡Excelente! Todas las órdenes de taller tienen un técnico asignado.'
+                  : tallerTechFilter === 'ASSIGNED'
+                  ? 'No hay órdenes asignadas con este filtro.'
+                  : 'No hay órdenes pendientes en mesa técnica.'}
               </div>
             ) : (
-              ordersEnTaller.map((o) => (
+              filteredOrdersEnTaller.map((o) => (
                 <div
                   key={o.id}
-                  className="p-4 rounded-2xl border border-slate-200/90 bg-slate-50/60 hover:bg-white hover:border-slate-300 transition-all space-y-2.5"
+                  className="p-4 rounded-2xl border border-slate-200/90 bg-slate-50/60 hover:bg-white hover:border-slate-300 transition-all space-y-3"
                 >
                   <div className="flex justify-between items-center gap-2">
                     <span className="font-mono font-black text-gray-900 text-xs shrink-0">
@@ -377,7 +444,7 @@ export default function FrontDeskDashboard() {
                       o.estado === 'EN_DIAGNOSTICO' ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-amber-50 text-amber-900 border-amber-200'
                     }`}>
                       <Clock size={11} className="text-amber-600 shrink-0" />
-                      <span>{o.estado === 'EN_DIAGNOSTICO' ? 'Técnico en Diagnóstico' : 'Esperando que el Técnico diagnostique'}</span>
+                      <span>{o.estado === 'EN_DIAGNOSTICO' ? 'Técnico en Diagnóstico' : 'Esperando Diagnóstico'}</span>
                     </span>
                   </div>
 
@@ -390,47 +457,81 @@ export default function FrontDeskDashboard() {
                     </p>
                   </div>
 
-                  {/* Asignación de Técnico */}
-                  <div className="flex items-center justify-between bg-slate-100/90 p-2 rounded-xl text-xs border border-slate-200/80">
-                    <div className="flex items-center gap-1.5 truncate">
-                      <UserCheck size={13} className={o.tecnico_nombre_manual ? 'text-emerald-600 shrink-0' : 'text-gray-400 shrink-0'} />
-                      <span className="text-[11px] font-medium text-gray-700 truncate">
-                        {o.tecnico_nombre_manual ? (
-                          <>Técnico: <strong className="text-gray-900">{o.tecnico_nombre_manual}</strong></>
-                        ) : (
-                          <span className="italic text-gray-400">Sin técnico asignado</span>
-                        )}
+                  {/* Asignación de Técnico: Selector Directo e Intuitivo en 1 Clic */}
+                  <div className={`p-2.5 rounded-2xl border transition-all ${
+                    o.tecnico_nombre_manual
+                      ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950'
+                      : 'bg-amber-50 border-amber-300 text-amber-950 shadow-2xs'
+                  }`}>
+                    <div className="flex items-center justify-between gap-1 mb-1.5">
+                      <span className="text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5">
+                        <UserCheck size={13} className={o.tecnico_nombre_manual ? 'text-emerald-600' : 'text-amber-600'} />
+                        <span>{o.tecnico_nombre_manual ? 'Técnico Responsable:' : '⚠️ Técnico Pendiente:'}</span>
                       </span>
+
+                      {o.tecnico_nombre_manual ? (
+                        <span className="text-[9px] font-black uppercase text-emerald-800 bg-emerald-200/80 px-2 py-0.5 rounded-md flex items-center gap-1">
+                          <Check size={10} className="text-emerald-700" />
+                          <span>Habilitado</span>
+                        </span>
+                      ) : (
+                        <span className="text-[9px] font-black uppercase text-amber-900 bg-amber-200 px-2 py-0.5 rounded-md animate-pulse">
+                          Por Asignar
+                        </span>
+                      )}
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleOpenAssignModal(o)}
-                      className="px-2 py-0.5 text-[10px] font-bold text-navy hover:text-blue-700 bg-white border border-slate-300 rounded-lg hover:bg-blue-50 cursor-pointer shrink-0 transition-all shadow-2xs"
-                    >
-                      {o.tecnico_nombre_manual ? 'Cambiar' : '+ Designar'}
-                    </button>
+                    {/* Selector Directo 1-Clic */}
+                    <div className="relative">
+                      <select
+                        value={o.usuario_tecnico_id || o.tecnico_asignado_id || ''}
+                        onChange={async (e) => {
+                          const techId = e.target.value;
+                          const tech = technicians.find(t => String(t.id) === String(techId));
+                          const techName = tech ? tech.nombre_completo : null;
+                          try {
+                            const updated = await OrdersService.assignTechnician(o.id, techId || null, techName);
+                            setOrders(prev => prev.map(item => item.id === o.id ? updated : item));
+                            showToast(tech ? `✓ Orden #${o.numero_orden || o.id} asignada a ${techName}` : 'Asignación eliminada');
+                          } catch (err) {
+                            showToast('Error al asignar técnico');
+                          }
+                        }}
+                        className={`w-full py-2 px-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer border focus:outline-none focus:ring-2 ${
+                          o.tecnico_nombre_manual
+                            ? 'bg-white text-gray-900 border-emerald-300 focus:ring-emerald-500/20 shadow-2xs'
+                            : 'bg-white text-gray-800 border-amber-300 focus:ring-amber-500/20 shadow-xs'
+                        }`}
+                      >
+                        <option value="">-- Clic aquí para Asignar Técnico --</option>
+                        {technicians.map(t => (
+                          <option key={t.id} value={t.id}>
+                            👤 {t.nombre_completo}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
                   {/* Si tiene solicitud pendiente de técnico */}
                   {o.solicitud_edicion_estado === 'PENDIENTE' && (
-                    <div className="p-2 bg-indigo-50 border border-indigo-200 rounded-xl flex items-center justify-between text-xs gap-1.5">
+                    <div className="p-2.5 bg-indigo-50 border border-indigo-200 rounded-xl flex items-center justify-between text-xs gap-2">
                       <div className="truncate">
                         <span className="text-[9px] uppercase font-black text-indigo-900 block">Solicitud de Edición:</span>
                         <span className="font-bold text-indigo-700 text-[11px] truncate block">{o.solicitud_edicion_tecnico_nombre}</span>
                       </div>
-                      <div className="flex items-center gap-1 shrink-0">
+                      <div className="flex items-center gap-1.5 shrink-0">
                         <button
                           type="button"
                           onClick={() => handleApproveRequest(o.id)}
-                          className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold cursor-pointer"
+                          className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-black cursor-pointer shadow-xs"
                         >
                           Aprobar
                         </button>
                         <button
                           type="button"
                           onClick={() => handleRejectRequest(o.id)}
-                          className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-gray-700 rounded text-[10px] font-bold cursor-pointer"
+                          className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-gray-700 rounded-lg text-[10px] font-bold cursor-pointer"
                         >
                           Rechazar
                         </button>

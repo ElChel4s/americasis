@@ -42,14 +42,16 @@ export const OrdersRepository = {
       // Insertar orden de servicio
       const { rows: orderRows } = await client.query(`
         INSERT INTO ordenes_servicio 
-        (sucursal_id, cliente_id, usuario_recepcion_id, recepcionista_nombre_manual, estado, moneda, tasa_cambio, notas_internas, monto_subtotal_servicio, monto_subtotal_accesorios, sumatoria_total, total_literal) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 0, 0, $9) 
+        (sucursal_id, cliente_id, usuario_recepcion_id, recepcionista_nombre_manual, usuario_tecnico_id, tecnico_nombre_manual, estado, moneda, tasa_cambio, notas_internas, monto_subtotal_servicio, monto_subtotal_accesorios, sumatoria_total, total_literal) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, 0, 0, $11) 
         RETURNING *
       `, [
         sucursalId, 
         clienteId, 
         orderData.usuario_recepcion_id || null, 
         orderData.recepcionista_nombre_manual || 'Recepcionista Turno',
+        orderData.usuario_tecnico_id || null,
+        orderData.tecnico_nombre_manual || null,
         orderData.estado || 'BORRADOR', 
         orderData.moneda || 'BOB', 
         orderData.tasa_cambio || 6.96, 
@@ -202,6 +204,8 @@ export const OrdersRepository = {
         cliente_id: clienteId,
         numero_orden: numeroOrden,
         recepcionista_nombre_manual: orderData.recepcionista_nombre_manual || 'Recepción Mostrador',
+        usuario_tecnico_id: orderData.usuario_tecnico_id || null,
+        tecnico_nombre_manual: orderData.tecnico_nombre_manual || null,
         estado: orderData.estado || 'RECIBIDO',
         moneda: orderData.moneda || 'BOB',
         tasa_cambio: orderData.tasa_cambio || 6.96,

@@ -360,40 +360,52 @@ export default function AdminDashboard({ onNewOrder }) {
                         {ord.equipos?.length || ord.total_equipos || 1} radio(s)
                       </td>
 
-                      {/* Celda: Técnico Asignado */}
+                      {/* Celda: Técnico Asignado (Selector Directo 1-Clic) */}
                       <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {ord.tecnico_nombre_manual ? (
-                            <span className="font-bold text-gray-800 text-[11px] bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200">
-                              {ord.tecnico_nombre_manual}
-                            </span>
-                          ) : (
-                            <span className="italic text-gray-400 text-[11px]">
-                              Sin Asignar
-                            </span>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleOpenAssignModal(ord)}
-                            className="text-[10px] font-bold text-navy hover:text-blue-700 bg-white border border-slate-300 px-2 py-0.5 rounded-lg hover:bg-slate-50 cursor-pointer shadow-2xs transition-all"
+                        <div className="min-w-[170px] space-y-1">
+                          <select
+                            value={ord.usuario_tecnico_id || ord.tecnico_asignado_id || ''}
+                            onChange={async (e) => {
+                              const techId = e.target.value;
+                              const tech = technicians.find(t => String(t.id) === String(techId));
+                              const techName = tech ? tech.nombre_completo : null;
+                              try {
+                                const updated = await OrdersService.assignTechnician(ord.id, techId || null, techName);
+                                setOrders(prev => prev.map(item => item.id === ord.id ? updated : item));
+                                showToast(tech ? `✓ Orden #${ord.numero_orden || ord.id} asignada a ${techName}` : 'Asignación removida');
+                              } catch (err) {
+                                showToast('Error al asignar técnico');
+                              }
+                            }}
+                            className={`w-full py-1.5 px-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer focus:outline-none focus:ring-2 ${
+                              ord.tecnico_nombre_manual
+                                ? 'bg-emerald-50 text-emerald-950 border-emerald-300 focus:ring-emerald-500/20'
+                                : 'bg-amber-50 text-amber-950 border-amber-300 focus:ring-amber-500/20 shadow-2xs'
+                            }`}
                           >
-                            {ord.tecnico_nombre_manual ? 'Cambiar' : '+ Asignar'}
-                          </button>
+                            <option value="">-- Sin Asignar --</option>
+                            {technicians.map(t => (
+                              <option key={t.id} value={t.id}>
+                                👤 {t.nombre_completo}
+                              </option>
+                            ))}
+                          </select>
+
+                          {ord.solicitud_edicion_estado === 'PENDIENTE' && (
+                            <div className="flex items-center justify-between bg-indigo-50 px-2 py-1 rounded-lg border border-indigo-200 text-[10px]">
+                              <span className="font-bold text-indigo-900 truncate max-w-[100px]">
+                                Pide: {ord.solicitud_edicion_tecnico_nombre}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleApproveRequest(ord.id)}
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-2 py-0.5 rounded text-[9px] cursor-pointer shadow-xs"
+                              >
+                                Aprobar
+                              </button>
+                            </div>
+                          )}
                         </div>
-                        {ord.solicitud_edicion_estado === 'PENDIENTE' && (
-                          <div className="mt-1 flex items-center gap-1">
-                            <span className="text-[9px] bg-indigo-100 text-indigo-900 font-bold px-1.5 py-0.5 rounded">
-                              Solicita: {ord.solicitud_edicion_tecnico_nombre}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleApproveRequest(ord.id)}
-                              className="text-[9px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-1.5 py-0.5 rounded cursor-pointer"
-                            >
-                              Aprobar
-                            </button>
-                          </div>
-                        )}
                       </td>
 
                       <td className="py-3.5 px-4">

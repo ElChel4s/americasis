@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useState, useRef } from 'react';
-import { User, ScanLine, Settings2, Camera, Upload, ImagePlus, X, Aperture, Plus, Radio, Trash2, Smartphone } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { User, ScanLine, Settings2, Camera, Upload, ImagePlus, X, Aperture, Plus, Radio, Trash2, Smartphone, UserCheck } from 'lucide-react';
 import QrMobileModal from '@/components/modals/QrMobileModal';
 import ImageCropModal from '@/components/modals/ImageCropModal';
 import BarcodeScannerModal from '@/components/modals/BarcodeScannerModal';
 import EquipmentTabs from '@/components/orders/EquipmentTabs';
+import { OrdersService } from '@/lib/services/orders.service';
 
 
 const MARCAS_RADIO = ['Motorola', 'Vertex Standard', 'Yaesu', 'Kenwood', 'Icom', 'Hytera', 'Baofeng', 'Otro'];
@@ -25,6 +26,13 @@ export default function Step1Reception({
   const [showQRModal, setShowQRModal] = useState(false);
   const [showCatalogModal, setShowCatalogModal] = useState(false);
   const [isBarcodeModalOpen, setIsBarcodeModalOpen] = useState(false);
+  const [technicians, setTechnicians] = useState([]);
+
+  useEffect(() => {
+    OrdersService.getTechnicians().then(list => {
+      setTechnicians(Array.isArray(list) ? list : []);
+    }).catch(() => {});
+  }, []);
 
   const [nuevoAccesorioRecepcion, setNuevoAccesorioRecepcion] = useState('');
   const [catalogoRecepcion, setCatalogoRecepcion] = useState(() => {
@@ -153,7 +161,7 @@ export default function Step1Reception({
 
       {/* Cliente y Orden de Servicio */}
       <div className="card">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
           <div>
             <label className="input-label">Número de Orden de Servicio (# O.S.)</label>
             <input 
@@ -175,6 +183,35 @@ export default function Step1Reception({
               value={formData.cliente || ''}
               onChange={(e) => updateForm({ cliente: e.target.value.toUpperCase() })}
             />
+          </div>
+          <div>
+            <label className="input-label flex items-center justify-between">
+              <span className="flex items-center gap-1.5 font-bold text-gray-800">
+                <UserCheck size={14} className="text-[#E30613]"/> Técnico Asignado
+              </span>
+              <span className="text-[10px] text-gray-400 font-normal">Opcional</span>
+            </label>
+            <select
+              className="input-field text-xs sm:text-sm font-semibold text-gray-800 bg-slate-50 border border-slate-300 focus:border-[#E30613] focus:bg-white cursor-pointer"
+              value={formData.usuario_tecnico_id || formData.tecnicoAsignadoId || ''}
+              onChange={(e) => {
+                const techId = e.target.value;
+                const tech = technicians.find(t => String(t.id) === String(techId));
+                updateForm({
+                  tecnicoAsignadoId: techId || null,
+                  tecnicoNombre: tech ? tech.nombre_completo : null,
+                  usuario_tecnico_id: techId || null,
+                  tecnico_nombre_manual: tech ? tech.nombre_completo : null
+                });
+              }}
+            >
+              <option value="">-- Sin Asignar (Cualquier técnico puede solicitar) --</option>
+              {technicians.map(t => (
+                <option key={t.id} value={t.id}>
+                  👤 {t.nombre_completo} ({t.email})
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </div>

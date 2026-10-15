@@ -335,6 +335,8 @@ export const OrdersService = {
             cliente_id: data.cliente_id || null,
             razon_social: nuevaOrden.razon_social,
             recepcionista_nombre_manual: data.recepcionista_nombre_manual || 'Recepción Mostrador',
+            usuario_tecnico_id: nuevaOrden.usuario_tecnico_id || data.tecnicoAsignadoId || null,
+            tecnico_nombre_manual: nuevaOrden.tecnico_nombre_manual || data.tecnicoNombre || null,
             estado: nuevaOrden.estado,
             moneda: data.moneda || 'BOB',
             tasa_cambio: data.tasa_cambio || 6.96,
