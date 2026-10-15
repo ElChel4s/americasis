@@ -35,15 +35,14 @@ export default function Step1Reception({
   }, []);
 
   const [nuevoAccesorioRecepcion, setNuevoAccesorioRecepcion] = useState('');
-  const [catalogoRecepcion, setCatalogoRecepcion] = useState(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem('america_catalogo_accesorios');
-        if (saved) return JSON.parse(saved);
-      } catch (e) {}
-    }
-    return DEFAULT_CATALOGO;
-  });
+  const [catalogoRecepcion, setCatalogoRecepcion] = useState(DEFAULT_CATALOGO);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('america_catalogo_accesorios');
+      if (saved) setCatalogoRecepcion(JSON.parse(saved));
+    } catch (e) {}
+  }, []);
   const fileInputRef = useRef(null);
 
   const equipo = formData.equipos[activeEquipoIndex] || {};

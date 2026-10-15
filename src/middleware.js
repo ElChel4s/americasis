@@ -87,9 +87,17 @@ export async function middleware(request) {
         return NextResponse.redirect(new URL('/admin/inicio', request.url));
       }
 
-      if (rol !== 'TECNICO' && rol !== 'ADMINISTRADOR') {
-        const target = rol === 'RECEPCION' ? '/recepcion/inicio' : '/admin/inicio';
-        return NextResponse.redirect(new URL(target, request.url));
+      // Recepción tiene autorización explícita para ver y editar diagnósticos técnicos en /tecnico/diagnostico/*
+      if (pathname.startsWith('/tecnico/diagnostico')) {
+        if (rol !== 'TECNICO' && rol !== 'ADMINISTRADOR' && rol !== 'RECEPCION') {
+          return NextResponse.redirect(new URL('/login', request.url));
+        }
+      } else {
+        // En las demás rutas de laboratorio (/tecnico/inicio, historial-personal), solo TECNICO y ADMINISTRADOR
+        if (rol !== 'TECNICO' && rol !== 'ADMINISTRADOR') {
+          const target = rol === 'RECEPCION' ? '/recepcion/inicio' : '/admin/inicio';
+          return NextResponse.redirect(new URL(target, request.url));
+        }
       }
     }
 

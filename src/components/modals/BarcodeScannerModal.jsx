@@ -26,11 +26,17 @@ export default function BarcodeScannerModal({
   subtitle = "Escanea el código QR con tu smartphone para usarlo como pistola lectora"
 }) {
   const [sessionId, setSessionId] = useState('');
-  const [customHost, setCustomHost] = useState(() => (typeof window !== 'undefined' ? window.location.origin : ''));
+  const [customHost, setCustomHost] = useState('');
   const [copied, setCopied] = useState(false);
   const [lastScanned, setLastScanned] = useState(null);
   const [keepOpen, setKeepOpen] = useState(false);
   const [isWaiting, setIsWaiting] = useState(true);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setCustomHost(window.location.origin);
+    }
+  }, []);
 
   // Generar ID de sesión único al abrir
   useEffect(() => {

@@ -557,21 +557,35 @@ export default function FrontDeskDashboard() {
                     </div>
                   )}
 
-                  <div className="pt-2 border-t border-slate-200/60 flex items-center justify-between">
-                    <span className="text-[10px] text-gray-400 flex items-center gap-1 font-mono">
+                  <div className="pt-2 border-t border-slate-200/60 flex items-center justify-between gap-2">
+                    <span suppressHydrationWarning className="text-[10px] text-gray-400 flex items-center gap-1 font-mono shrink-0">
                       <Clock size={11} />
                       {new Date(o.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </span>
 
-                    <button
-                      type="button"
-                      id={`btn-ver-datos-ingreso-${o.id}`}
-                      onClick={() => setViewingProgressOrder(o)}
-                      className="px-3 py-1.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-gray-700 font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-                    >
-                      <Eye size={13} className="text-gray-500" />
-                      <span>Ver Datos de Ingreso</span>
-                    </button>
+                    <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                      <button
+                        type="button"
+                        id={`btn-ver-datos-ingreso-${o.id}`}
+                        onClick={() => setViewingProgressOrder(o)}
+                        className="px-2.5 py-1.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-gray-700 font-bold text-xs flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
+                        title="Ver datos y fotos de ingreso de mostrador"
+                      >
+                        <Eye size={12} className="text-gray-500" />
+                        <span>Ingreso</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        id={`btn-ver-editar-diag-taller-${o.id}`}
+                        onClick={() => router.push(`/tecnico/diagnostico/${o.id}`)}
+                        className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs flex items-center gap-1 transition-all cursor-pointer shadow-xs active:scale-95"
+                        title="Ver o editar el diagnóstico del laboratorio técnico"
+                      >
+                        <Wrench size={12} className="text-[#E30613]" />
+                        <span>Diagnóstico</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))
@@ -628,15 +642,29 @@ export default function FrontDeskDashboard() {
                     </div>
                   </div>
 
-                  {/* Botón Directo Exigido: Fijar Costos y Generar Informe */}
-                  <button
-                    type="button"
-                    onClick={() => router.push(`/recepcion/orden/${o.id}/presupuesto`)}
-                    className="w-full py-2.5 px-3 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-bold text-xs rounded-xl shadow-md shadow-red-600/20 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                  >
-                    <span>Fijar Costos y Generar Informe</span>
-                    <ArrowRight size={14} />
-                  </button>
+                  {/* Botones Directos: Ver / Editar Diagnóstico y Fijar Costos */}
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <button
+                      type="button"
+                      id={`btn-ver-diag-cotizar-${o.id}`}
+                      onClick={() => router.push(`/tecnico/diagnostico/${o.id}`)}
+                      className="py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition-all cursor-pointer border border-slate-200"
+                      title="Ver o modificar el diagnóstico técnico"
+                    >
+                      <Wrench size={13} className="text-[#E30613]" />
+                      <span>Ver Diag.</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      id={`btn-fijar-costos-${o.id}`}
+                      onClick={() => router.push(`/recepcion/orden/${o.id}/presupuesto`)}
+                      className="py-2 px-2 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-bold text-xs rounded-xl shadow-md shadow-red-600/20 flex items-center justify-center gap-1 transition-all cursor-pointer"
+                    >
+                      <span>Fijar Costos</span>
+                      <ArrowRight size={13} />
+                    </button>
+                  </div>
                 </div>
               ))
             )}

@@ -186,11 +186,11 @@ export default function OrdersTable({
                         <span className="font-mono text-sm font-black text-navy group-hover:text-red-600 transition-colors">
                           #{numeroOrden}
                         </span>
-                        <div className="flex items-center gap-1 text-[11px] text-slate-400 font-medium mt-0.5">
+                        <div suppressHydrationWarning className="flex items-center gap-1 text-[11px] text-slate-400 font-medium mt-0.5">
                           <Calendar size={11} />
-                          <span>{formatearFecha(ord.creado_en)}</span>
+                          <span suppressHydrationWarning>{formatearFecha(ord.creado_en)}</span>
                           <span className="text-slate-300">•</span>
-                          <span>{formatearTiempoRelativo(ord.creado_en)}</span>
+                          <span suppressHydrationWarning>{formatearTiempoRelativo(ord.creado_en)}</span>
                         </div>
                       </div>
                     </td>

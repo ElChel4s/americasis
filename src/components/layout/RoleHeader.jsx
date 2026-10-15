@@ -50,22 +50,19 @@ export default function RoleHeader({ navItems = [], roleTitle = 'Sistema ERP' })
   const pathname = usePathname();
   const router = useRouter();
 
-  const [user, setUser] = useState(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const cached = localStorage.getItem('america_user');
-        return cached ? JSON.parse(cached) : null;
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  });
-
+  // Inicialización idéntica entre servidor y cliente para evitar Error de Hidratación #418
+  const [mounted, setMounted] = useState(false);
+  const [user, setUser] = useState(null);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
 
   useEffect(() => {
+    setMounted(true);
+    try {
+      const cached = localStorage.getItem('america_user');
+      if (cached) setUser(JSON.parse(cached));
+    } catch {}
+
     fetch('/api/auth/me')
       .then(r => r.json())
       .then(j => {
@@ -94,28 +91,27 @@ export default function RoleHeader({ navItems = [], roleTitle = 'Sistema ERP' })
     setTimeout(() => setToastMessage(''), 4000);
   };
 
-  // Determinar los ítems de navegación y título según el rol real del usuario autenticado
-  const userRole = user?.rol;
+  // En SSR e hidratación inicial se usan estrictamente los props del servidor
+  const userRole = mounted ? user?.rol : null;
   let effectiveRoleTitle = roleTitle;
   let effectiveNavItems = navItems;
-  let homeLink = '/login';
+  let homeLink = roleTitle.includes('Gerencia') 
+    ? '/admin/inicio' 
+    : (roleTitle.includes('Mostrador') ? '/recepcion/inicio' : '/tecnico/inicio');
 
-  if (userRole === 'ADMINISTRADOR') {
+  // Una vez montado en el cliente, si el usuario autenticado es Administrador, aseguramos su rol
+  if (mounted && userRole === 'ADMINISTRADOR') {
     effectiveRoleTitle = 'Gerencia General';
     effectiveNavItems = ADMIN_NAV;
     homeLink = '/admin/inicio';
-  } else if (userRole === 'RECEPCION') {
+  } else if (mounted && userRole === 'RECEPCION') {
     effectiveRoleTitle = 'Mostrador & Recepción';
     effectiveNavItems = RECEPCION_NAV;
     homeLink = '/recepcion/inicio';
-  } else if (userRole === 'TECNICO') {
+  } else if (mounted && userRole === 'TECNICO') {
     effectiveRoleTitle = 'Laboratorio RF';
     effectiveNavItems = TECNICO_NAV;
     homeLink = '/tecnico/inicio';
-  } else {
-    if (roleTitle.includes('Gerencia')) homeLink = '/admin/inicio';
-    else if (roleTitle.includes('Mostrador')) homeLink = '/recepcion/inicio';
-    else if (roleTitle.includes('Laboratorio')) homeLink = '/tecnico/inicio';
   }
 
   const isActive = (href) => {
@@ -148,14 +144,14 @@ export default function RoleHeader({ navItems = [], roleTitle = 'Sistema ERP' })
               <h1 className="font-black text-xl leading-none tracking-tight text-gray-900">
                 AMERICA<span className="text-[#E30613]">SIS</span>
               </h1>
-              <p className="text-[9px] sm:text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-0.5">
+              <p suppressHydrationWarning className="text-[9px] sm:text-[10px] text-gray-400 uppercase tracking-[0.25em] font-bold mt-0.5">
                 {effectiveRoleTitle}
               </p>
             </div>
           </Link>
 
           {/* Botón de acceso directo al Panel de Gerencia cuando el Admin está en vistas operativas */}
-          {userRole === 'ADMINISTRADOR' && !pathname.startsWith('/admin') && (
+          {mounted && userRole === 'ADMINISTRADOR' && !pathname.startsWith('/admin') && (
             <Link
               href="/admin/inicio"
               id="btn-header-back-to-admin"
@@ -165,6 +161,20 @@ export default function RoleHeader({ navItems = [], roleTitle = 'Sistema ERP' })
               <ArrowLeft size={14} className="text-[#E30613]" />
               <span className="hidden sm:inline">Panel de Gerencia</span>
               <span className="sm:hidden">Gerencia</span>
+            </Link>
+          )}
+
+          {/* Botón de acceso directo a Recepción cuando personal de recepción está en diagnósticos técnicos */}
+          {mounted && userRole === 'RECEPCION' && pathname.startsWith('/tecnico') && (
+            <Link
+              href="/recepcion/inicio"
+              id="btn-header-back-to-recepcion"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 ml-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-xs transition-all cursor-pointer animate-in fade-in"
+              title="Regresar al Tablero de Mostrador y Recepción"
+            >
+              <ArrowLeft size={14} className="text-[#E30613]" />
+              <span className="hidden sm:inline">Volver a Recepción</span>
+              <span className="sm:hidden">Recepción</span>
             </Link>
           )}
         </div>
@@ -196,14 +206,14 @@ export default function RoleHeader({ navItems = [], roleTitle = 'Sistema ERP' })
         {/* User Actions */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           <div className="hidden sm:flex items-center gap-2.5 bg-gray-50 pl-1.5 pr-2 py-1.5 rounded-full border border-gray-200/80 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => setIsProfileModalOpen(true)} title="Ver mi perfil">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-navy-light to-navy flex items-center justify-center text-white font-bold text-xs shadow-sm">
+            <div suppressHydrationWarning className="w-8 h-8 rounded-full bg-gradient-to-br from-navy-light to-navy flex items-center justify-center text-white font-bold text-xs shadow-sm">
               {initials(user?.nombre_completo)}
             </div>
             <div className="leading-tight pr-1">
-              <span className="text-xs font-bold text-gray-700 block max-w-[130px] truncate">
+              <span suppressHydrationWarning className="text-xs font-bold text-gray-700 block max-w-[130px] truncate">
                 {user?.nombre_completo || 'Cargando...'}
               </span>
-              <span className="text-[10px] font-semibold text-gray-500">
+              <span suppressHydrationWarning className="text-[10px] font-semibold text-gray-500">
                 {userRole || 'Sesión'}
               </span>
             </div>

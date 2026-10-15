@@ -25,14 +25,14 @@ export default function PresupuestoOrdenPage() {
   const [activeEquipoIdx, setActiveEquipoIdx] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [feedback, setFeedback] = useState(null);
-  const [userRole, setUserRole] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('america_user_role') || '';
-    }
-    return '';
-  });
+  const [userRole, setUserRole] = useState('');
 
   useEffect(() => {
+    try {
+      const cached = localStorage.getItem('america_user_role');
+      if (cached) setUserRole(cached);
+    } catch {}
+
     fetch('/api/auth/me')
       .then(r => r.json())
       .then(j => {
@@ -147,9 +147,9 @@ export default function PresupuestoOrdenPage() {
         </p>
         <button
           onClick={() => router.push(userRole === 'ADMINISTRADOR' ? '/admin/inicio' : '/recepcion/inicio')}
-          className="px-5 py-2.5 bg-navy text-white text-xs font-bold rounded-xl"
+          className="px-5 py-2.5 bg-navy text-white text-xs font-bold rounded-xl cursor-pointer"
         >
-          {userRole === 'ADMINISTRADOR' ? 'Volver al Panel de Gerencia' : 'Volver al Inicio'}
+          <span suppressHydrationWarning>{userRole === 'ADMINISTRADOR' ? 'Volver al Panel de Gerencia' : 'Volver al Inicio'}</span>
         </button>
       </div>
     );
@@ -177,7 +177,7 @@ export default function PresupuestoOrdenPage() {
           className="inline-flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-gray-900 bg-white hover:bg-slate-50 px-3.5 py-2 rounded-xl border border-slate-200 shadow-xs transition-all cursor-pointer"
         >
           <ArrowLeft size={15} />
-          <span>{userRole === 'ADMINISTRADOR' ? 'Volver al Panel de Gerencia' : 'Volver al Tablero de Recepción'}</span>
+          <span suppressHydrationWarning>{userRole === 'ADMINISTRADOR' ? 'Volver al Panel de Gerencia' : 'Volver al Tablero de Recepción'}</span>
         </button>
 
         <div className="flex items-center gap-2">
@@ -194,20 +194,31 @@ export default function PresupuestoOrdenPage() {
       {/* SECCIÓN SUPERIOR: DIAGNÓSTICO DEL TÉCNICO EN MODO LECTURA */}
       {/* ============================================================== */}
       <div className="bg-white rounded-3xl p-6 border border-slate-200/90 shadow-sm space-y-4">
-        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-3">
           <div className="flex items-center gap-2">
             <span className="p-2 bg-blue-50 text-blue-600 rounded-xl">
               <Wrench size={18} />
             </span>
             <div>
               <h2 className="text-base font-black text-gray-900">
-                Diagnóstico Emitido por el Técnico (Modo Lectura)
+                Dictamen Técnico del Laboratorio
               </h2>
               <p className="text-xs text-gray-500">
                 Dictamen técnico oficial para fundamentar el presupuesto y la proforma al cliente.
               </p>
             </div>
           </div>
+
+          <button
+            type="button"
+            id="btn-editar-diagnostico-desde-presupuesto"
+            onClick={() => router.push(`/tecnico/diagnostico/${order.id}`)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer transition-all self-start sm:self-center active:scale-95"
+            title="Abrir mesa de trabajo para ver o modificar fallas y repuestos"
+          >
+            <Wrench size={13} className="text-[#E30613]" />
+            <span>Editar Diagnóstico Técnico</span>
+          </button>
         </div>
 
         {/* Selector de Pestañas de Radio del Lote */}

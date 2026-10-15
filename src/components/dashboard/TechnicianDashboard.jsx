@@ -361,9 +361,9 @@ export default function TechnicianDashboard() {
                         <span>{equiposCount} equipo(s) en lote</span>
                       </span>
 
-                      <span className="flex items-center gap-1 text-gray-500">
+                      <span suppressHydrationWarning className="flex items-center gap-1 text-gray-500">
                         <Clock size={13} />
-                        <span>{tiempoEspera}</span>
+                        <span suppressHydrationWarning>{tiempoEspera}</span>
                       </span>
 
                       {ord.equipos?.[0]?.falla_declarada_cliente && (

@@ -25,12 +25,18 @@ export default function QrMobileModal({
   onImagesUpdated
 }) {
   const [copied, setCopied] = useState(false);
-  const [customHost, setCustomHost] = useState(() => (typeof window !== 'undefined' ? window.location.origin : ''));
+  const [customHost, setCustomHost] = useState('');
   const [evidencias, setEvidencias] = useState([]);
   const [loading, setLoading] = useState(false);
   const [uploadingPc, setUploadingPc] = useState(false);
   const [selectedEtapa, setSelectedEtapa] = useState('DIAGNOSTICO');
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setCustomHost(window.location.origin);
+    }
+  }, []);
 
   const mobileUrl = useMemo(() => {
     const host = customHost || (typeof window !== 'undefined' ? window.location.origin : '');

@@ -51,9 +51,12 @@ export default function TecnicoDiagnosticoMesaPage() {
   };
 
   // Cálculo de permisos de edición:
-  // Administrador tiene acceso total. El técnico asignado tiene permiso de edición.
-  // Los demás técnicos tienen acceso en modo solo consulta.
+  // - Administrador tiene acceso total de edición.
+  // - Recepción tiene acceso total de visualización y edición del diagnóstico del técnico.
+  // - El técnico asignado a la orden tiene permiso de edición.
+  // - Los demás técnicos no asignados tienen acceso en modo solo consulta (pueden solicitar autorización).
   const isAdmin = currentUser?.rol === 'ADMINISTRADOR';
+  const isRecepcion = currentUser?.rol === 'RECEPCION';
   const isAssigned = Boolean(
     order?.usuario_tecnico_id && (
       String(order.usuario_tecnico_id) === String(currentUser?.id) ||
@@ -66,7 +69,20 @@ export default function TecnicoDiagnosticoMesaPage() {
     order?.tecnico_asignado_id && String(order.tecnico_asignado_id) === String(currentUser?.id)
   );
 
-  const canEdit = isAdmin || isAssigned;
+  const canEdit = isAdmin || isRecepcion || isAssigned;
+
+  const getReturnRoute = () => {
+    if (isAdmin) return '/admin/inicio';
+    if (isRecepcion) return '/recepcion/inicio';
+    return '/tecnico/inicio';
+  };
+
+  const getReturnLabel = () => {
+    if (isAdmin) return 'Volver al Panel de Gerencia';
+    if (isRecepcion) return 'Volver al Tablero de Recepción';
+    return 'Volver a Cola de Mesa';
+  };
+
   const isPendingRequest = order?.solicitud_edicion_estado === 'PENDIENTE';
   const myPendingRequest = isPendingRequest && (
     order?.solicitud_edicion_tecnico_id === currentUser?.id ||
@@ -116,15 +132,18 @@ export default function TecnicoDiagnosticoMesaPage() {
     }
   };
 
-  // Botón de salida 2: [ Finalizar Diagnóstico y Enviar a Recepción ] (guarda como DIAGNOSTICADO y vuelve a /tecnico/inicio)
+  // Botón de salida 2: [ Finalizar Diagnóstico y Enviar a Recepción / Guardar ]
   const handleFinalizarDiagnostico = async () => {
     if (!canEdit) return;
     setIsSaving(true);
     try {
       await OrdersService.saveDiagnosis(order.id, order.equipos, true);
-      showFeedbackMsg('¡Diagnóstico completado con éxito! Enviado a mostrador para presupuestar.');
+      const msg = isRecepcion 
+        ? '¡Diagnóstico guardado con éxito por Recepción!' 
+        : '¡Diagnóstico completado con éxito! Enviado a mostrador para presupuestar.';
+      showFeedbackMsg(msg);
       setTimeout(() => {
-        router.push('/tecnico/inicio');
+        router.push(getReturnRoute());
       }, 800);
     } catch (err) {
       console.error('Error al finalizar diagnóstico:', err);
@@ -151,10 +170,10 @@ export default function TecnicoDiagnosticoMesaPage() {
           No se encontró el expediente solicitado en la mesa técnica.
         </p>
         <button
-          onClick={() => router.push('/tecnico/inicio')}
-          className="px-5 py-2.5 bg-navy text-white text-xs font-bold rounded-xl"
+          onClick={() => router.push(getReturnRoute())}
+          className="px-5 py-2.5 bg-navy text-white text-xs font-bold rounded-xl cursor-pointer"
         >
-          Volver a la Mesa de Trabajo
+          {getReturnLabel()}
         </button>
       </div>
     );
@@ -234,11 +253,11 @@ export default function TecnicoDiagnosticoMesaPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/80 pb-4">
         <button
           type="button"
-          onClick={() => router.push('/tecnico/inicio')}
+          onClick={() => router.push(getReturnRoute())}
           className="inline-flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-gray-900 bg-white hover:bg-slate-50 px-3.5 py-2 rounded-xl border border-slate-200 shadow-xs transition-all cursor-pointer"
         >
           <ArrowLeft size={15} />
-          <span>Volver a Cola de Mesa</span>
+          <span>{getReturnLabel()}</span>
         </button>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -248,6 +267,21 @@ export default function TecnicoDiagnosticoMesaPage() {
           <span className="text-[10px] font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-xl">
             Asignado a: <strong className="text-gray-900">{order.tecnico_nombre_manual || 'Sin Asignar'}</strong>
           </span>
+          {isRecepcion && (
+            <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded-xl bg-blue-100 text-blue-800 border border-blue-300">
+              Modo Edición: Mostrador & Recepción
+            </span>
+          )}
+          {isAdmin && (
+            <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded-xl bg-slate-900 text-white shadow-xs">
+              Modo Edición: Gerencia General
+            </span>
+          )}
+          {!isAdmin && !isRecepcion && isAssigned && (
+            <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded-xl bg-emerald-100 text-emerald-800 border border-emerald-300">
+              Técnico Asignado
+            </span>
+          )}
           <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded-xl bg-amber-100 text-amber-800">
             Fase 2: Mesa de Diagnóstico
           </span>
@@ -406,7 +440,11 @@ export default function TecnicoDiagnosticoMesaPage() {
                 ) : (
                   <>
                     <Send size={16} />
-                    <span>Finalizar Diagnóstico y Enviar a Recepción</span>
+                    <span>
+                      {isRecepcion 
+                        ? 'Guardar Diagnóstico y Volver a Mostrador' 
+                        : (isAdmin ? 'Guardar Diagnóstico (Gerencia)' : 'Finalizar Diagnóstico y Enviar a Recepción')}
+                    </span>
                   </>
                 )}
               </button>

@@ -10,8 +10,8 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="es" className="h-full antialiased">
-      <body className={`${inter.className} min-h-full flex flex-col bg-slate-100 text-gray-800`}>
+    <html lang="es" className="h-full antialiased" suppressHydrationWarning>
+      <body className={`${inter.className} min-h-full flex flex-col bg-slate-100 text-gray-800`} suppressHydrationWarning>
         {children}
       </body>
     </html>

@@ -31,14 +31,14 @@ export default function NuevaOrdenPage() {
   const [activeEquipoIndex, setActiveEquipoIndex] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const [userRole, setUserRole] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('america_user_role') || '';
-    }
-    return '';
-  });
+  const [userRole, setUserRole] = useState('');
 
   useEffect(() => {
+    try {
+      const cached = localStorage.getItem('america_user_role');
+      if (cached) setUserRole(cached);
+    } catch {}
+
     fetch('/api/auth/me')
       .then(r => r.json())
       .then(j => {
@@ -196,7 +196,7 @@ export default function NuevaOrdenPage() {
           className="inline-flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-gray-900 bg-white hover:bg-slate-50 px-3.5 py-2 rounded-xl border border-slate-200 shadow-xs transition-all cursor-pointer"
         >
           <ArrowLeft size={15} />
-          <span>{userRole === 'ADMINISTRADOR' ? 'Volver al Panel de Gerencia' : 'Volver al Tablero de Recepción'}</span>
+          <span suppressHydrationWarning>{userRole === 'ADMINISTRADOR' ? 'Volver al Panel de Gerencia' : 'Volver al Tablero de Recepción'}</span>
         </button>
 
         <span className="text-xs font-mono font-bold text-[#E30613] bg-red-50 border border-red-200 px-3 py-1 rounded-xl">

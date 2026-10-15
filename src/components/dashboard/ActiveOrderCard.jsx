@@ -96,7 +96,7 @@ export default function ActiveOrderCard({ order, onContinue, onQuickView }) {
             </h4>
           </div>
 
-          <span className="text-[11px] text-gray-400 font-medium whitespace-nowrap flex items-center gap-1 shrink-0">
+          <span suppressHydrationWarning className="text-[11px] text-gray-400 font-medium whitespace-nowrap flex items-center gap-1 shrink-0">
             <Clock size={12} />
             {formatearTiempo(order.creado_en)}
           </span>
