@@ -15,6 +15,18 @@ import {
 } from '@/lib/utils/currencyFormat';
 import { generateDocxBlob } from '@/lib/utils/docxExport';
 
+function formatFechaBolivia(date = new Date()) {
+  const MESES = [
+    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+  ];
+  const d = date instanceof Date && !isNaN(date) ? date : new Date();
+  const dia = d.getDate();
+  const mes = MESES[d.getMonth()];
+  const anio = d.getFullYear();
+  return `${dia} de ${mes} de ${anio}`;
+}
+
 function HeaderMembrete() {
   return (
     <div className="w-full mb-4 break-inside-avoid">
@@ -56,11 +68,7 @@ export default function Step4ReportPreview({
   const condiciones = formData.condiciones || {};
 
   const currentDate = useMemo(() => {
-    return new Date().toLocaleDateString('es-BO', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric'
-    });
+    return formatFechaBolivia();
   }, []);
 
   // Subtotal 1 (Servicio técnico)
@@ -78,32 +86,32 @@ export default function Step4ReportPreview({
       (eq.repuestos || []).forEach((rep) => {
         if (rep.se_reemplaza) {
           list.push({
-            nombre: rep.nombre || 'Repuesto',
+            nombre: rep.nombre || rep.descripcion || 'Repuesto',
             cantidad: parseInt(rep.cantidad, 10) || 1,
             precio: parseFloat(rep.precio) || 0,
             es_opcional: Boolean(rep.es_opcional),
-            equipoNombre: `${eq.marca} ${eq.modelo || `Eq. ${eqIdx + 1}`}`
+            equipoNombre: `${eq.marca || 'Radio'} ${eq.modelo || `Eq. ${eqIdx + 1}`}`
           });
         }
       });
 
-      if (eq.antenaEstado === 'REEMPLAZO' && !(eq.repuestos || []).some(r => r.nombre?.toLowerCase().includes('antena'))) {
+      if (eq.antenaEstado === 'REEMPLAZO' && !(eq.repuestos || []).some(r => (r.nombre || r.descripcion || '').toLowerCase().includes('antena'))) {
         list.push({
           nombre: `Antena ${eq.banda || 'VHF'} (${eq.antenaModelo || 'Original'})`,
           cantidad: 1,
           precio: moneda === 'USD' ? 25 : 175,
           es_opcional: true,
-          equipoNombre: `${eq.marca} ${eq.modelo || `Eq. ${eqIdx + 1}`}`
+          equipoNombre: `${eq.marca || 'Radio'} ${eq.modelo || `Eq. ${eqIdx + 1}`}`
         });
       }
 
-      if ((eq.bateriaEstado === 'REEMPLAZO' || (parseInt(eq.bateriaCarga, 10) > 0 && parseInt(eq.bateriaCarga, 10) < 70)) && !(eq.repuestos || []).some(r => r.nombre?.toLowerCase().includes('bater'))) {
+      if ((eq.bateriaEstado === 'REEMPLAZO' || (parseInt(eq.bateriaCarga, 10) > 0 && parseInt(eq.bateriaCarga, 10) < 70)) && !(eq.repuestos || []).some(r => (r.nombre || r.descripcion || '').toLowerCase().includes('bater'))) {
         list.push({
           nombre: `Batería Li-Ion ${eq.bateriaModelo || 'Alta Capacidad'}`,
           cantidad: 1,
           precio: moneda === 'USD' ? 55 : 380,
           es_opcional: false,
-          equipoNombre: `${eq.marca} ${eq.modelo || `Eq. ${eqIdx + 1}`}`
+          equipoNombre: `${eq.marca || 'Radio'} ${eq.modelo || `Eq. ${eqIdx + 1}`}`
         });
       }
     });
@@ -121,12 +129,19 @@ export default function Step4ReportPreview({
   // Lista de accesorios de recepción para Sección 1
   const getAccesoriosRecepcionStr = (eq) => {
     const arr = [];
-    const obj = eq.accesoriosRecepcion || {};
-    Object.keys(obj).forEach((k) => {
-      if (obj[k] === 'CON') {
-        arr.push(`con ${k.toLowerCase()}`);
-      }
-    });
+    if (Array.isArray(eq.accesorios)) {
+      eq.accesorios.forEach(a => {
+        if (a.estado_ingreso === 'CON') {
+          arr.push(`con ${String(a.tipo_accesorio).toLowerCase()}`);
+        }
+      });
+    } else if (eq.accesoriosRecepcion && typeof eq.accesoriosRecepcion === 'object') {
+      Object.keys(eq.accesoriosRecepcion).forEach((k) => {
+        if (eq.accesoriosRecepcion[k] === 'CON') {
+          arr.push(`con ${k.toLowerCase()}`);
+        }
+      });
+    }
     if (arr.length === 0) return 'Con accesorios básicos';
     return arr.join(', ');
   };
@@ -134,37 +149,53 @@ export default function Step4ReportPreview({
   // Fotos divididas en Recepción y Diagnóstico para Sección 7
   const fotosRecepcion = useMemo(() => {
     return (formData.equipos || []).flatMap((eq, eqIdx) =>
-      (eq.imagenes || []).map((img, i) => ({
-        ...img,
-        equipoLabel: `${eq.marca} ${eq.modelo || `Equipo #${eqIdx + 1}`}`,
-        serie: eq.serie || eq.numero_serie || 'S/N',
-        etiqueta: img.name || `Foto Exterior #${i + 1}`
-      }))
+      (eq.imagenes || []).map((img, i) => {
+        const url = typeof img === 'string' ? img : (img?.url || '');
+        return {
+          ...img,
+          url,
+          equipoLabel: `${eq.marca || 'Radio'} ${eq.modelo || `Equipo #${eqIdx + 1}`}`,
+          serie: eq.serie || eq.numero_serie || 'S/N',
+          etiqueta: img?.name || `Foto Exterior #${i + 1}`
+        };
+      }).filter(f => Boolean(f.url))
     );
   }, [formData.equipos]);
 
   const fotosDiagnostico = useMemo(() => {
     return (formData.equipos || []).flatMap((eq, eqIdx) =>
-      (eq.imagenesInternas || []).map((img, i) => ({
-        ...img,
-        equipoLabel: `${eq.marca} ${eq.modelo || `Equipo #${eqIdx + 1}`}`,
-        serie: eq.serie || eq.numero_serie || 'S/N',
-        etiqueta: img.name || `Foto Placa / Laboratorio #${i + 1}`
-      }))
+      (eq.imagenesInternas || []).map((img, i) => {
+        const url = typeof img === 'string' ? img : (img?.url || '');
+        return {
+          ...img,
+          url,
+          equipoLabel: `${eq.marca || 'Radio'} ${eq.modelo || `Equipo #${eqIdx + 1}`}`,
+          serie: eq.serie || eq.numero_serie || 'S/N',
+          etiqueta: img?.name || `Foto Placa / Laboratorio #${i + 1}`
+        };
+      }).filter(f => Boolean(f.url))
     );
   }, [formData.equipos]);
 
   const tieneFotos = fotosRecepcion.length > 0 || fotosDiagnostico.length > 0;
 
+  const ordenNumeroStr = formData.ordenServicio || formData.numero_orden || (formData.id ? `OS-${String(formData.id).padStart(5, '0')}` : 'PROV');
+  const clienteNombreStr = formData.cliente || formData.razon_social || 'CLIENTE NO ESPECIFICADO';
+
   // Manejo de exportación a Word (.docx)
   const handleExportDocx = async () => {
     try {
       setIsExportingDocx(true);
-      const blob = await generateDocxBlob(formData, currentUser);
+      const docxPayload = {
+        ...formData,
+        cliente: clienteNombreStr,
+        ordenServicio: ordenNumeroStr
+      };
+      const blob = await generateDocxBlob(docxPayload, currentUser);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const osName = formData.ordenServicio ? formData.ordenServicio.replace(/[^a-zA-Z0-9_-]/g, '_') : 'PROV';
+      const osName = ordenNumeroStr.replace(/[^a-zA-Z0-9_-]/g, '_');
       a.download = `Informe_Tecnico_${osName}_${moneda}.docx`;
       document.body.appendChild(a);
       a.click();
@@ -255,7 +286,7 @@ export default function Step4ReportPreview({
             {/* A. Encabezado Oficial */}
             <div className="flex flex-col sm:flex-row justify-between items-start text-xs font-medium">
               <div>
-                <p>Santa Cruz de la Sierra, {currentDate}</p>
+                <p suppressHydrationWarning>Santa Cruz de la Sierra, {currentDate}</p>
               </div>
             </div>
 
@@ -263,7 +294,7 @@ export default function Step4ReportPreview({
             <div className="space-y-0.5">
               <p className="font-medium text-xs">Señores:</p>
               <p className="font-black text-sm sm:text-base text-gray-900 uppercase tracking-tight">
-                {formData.cliente || 'CLIENTE NO ESPECIFICADO'}
+                {clienteNombreStr}
               </p>
               <p className="font-medium text-xs">Presente. -</p>
             </div>
@@ -271,7 +302,7 @@ export default function Step4ReportPreview({
             {/* Referencia Oficial */}
             <div className="pt-1">
               <p className="font-black underline underline-offset-4 text-xs sm:text-sm tracking-wide text-gray-900">
-                REF.: INFORME TECNICO PRELIMINAR DE ORDEN DE SERVICIO: N° {formData.ordenServicio || 'PROV'}
+                REF.: INFORME TECNICO PRELIMINAR DE ORDEN DE SERVICIO: N° {ordenNumeroStr}
                 {revisionEditable ? ` ${revisionEditable}` : ''}
               </p>
             </div>

@@ -343,7 +343,7 @@ export default function OrdersTable({
                   <span className="font-mono text-sm font-black text-navy block">
                     {ord.moneda === 'USD' ? '$' : 'Bs.'} {parseFloat(ord.sumatoria_total || 0).toFixed(2)}
                   </span>
-                  <span className="text-[10px] text-slate-400">
+                  <span suppressHydrationWarning className="text-[10px] text-slate-400">
                     {formatearFecha(ord.creado_en)}
                   </span>
                 </div>

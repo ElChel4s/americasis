@@ -104,8 +104,23 @@ function HistorialContent() {
   };
 
   // Abrir reporte membretado en modal
-  const handleOpenPrintModal = (ord) => {
+  const handleOpenPrintModal = async (ord) => {
+    if (!ord) return;
     setPrintModalOrder(ord);
+
+    if (ord.id) {
+      try {
+        const res = await fetch(`/api/orders/${ord.id}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && json.data) {
+            setPrintModalOrder(json.data);
+          }
+        }
+      } catch (err) {
+        console.warn('Error al cargar datos completos para reporte:', err);
+      }
+    }
   };
 
   // Navegar al taller para continuar la orden
@@ -115,16 +130,18 @@ function HistorialContent() {
 
   // Mapear orden para Step4ReportPreview
   const previewFormData = printModalOrder ? {
+    ...printModalOrder,
     ordenServicio: printModalOrder.numero_orden || `OS-${String(printModalOrder.id).padStart(5, '0')}`,
-    cliente: printModalOrder.razon_social || 'Consumidor Final',
+    cliente: printModalOrder.razon_social || printModalOrder.cliente || 'Consumidor Final',
     nitCi: printModalOrder.nit_ci || '',
     moneda: printModalOrder.moneda || 'BOB',
     equipos: (printModalOrder.equipos || []).map((eq, i) => ({
+      ...eq,
       id: eq.id || i,
       marca: eq.marca || 'Motorola',
       modelo: eq.modelo || 'DEP450',
-      serie: eq.numero_serie || '',
-      numero_serie: eq.numero_serie || '',
+      serie: eq.serie || eq.numero_serie || '',
+      numero_serie: eq.numero_serie || eq.serie || '',
       banda: eq.banda || 'VHF',
       reparacion_rechazada: eq.reparacion_rechazada || false,
       motivo_rechazo: eq.motivo_rechazo || '',
@@ -132,9 +149,9 @@ function HistorialContent() {
       texto_diagnostico: eq.texto_diagnostico || '',
       descripcion_servicio: eq.descripcion_servicio || 'Mantenimiento preventivo y calibración RF',
       costo_servicio: parseFloat(eq.costo_servicio) || 150,
-      accesoriosRecepcion: eq.accesorios 
+      accesoriosRecepcion: eq.accesorios && Array.isArray(eq.accesorios)
         ? eq.accesorios.reduce((acc, a) => { acc[a.tipo_accesorio] = a.estado_ingreso; return acc; }, {}) 
-        : { 'Antena': 'CON', 'Batería': 'CON', 'Cargador': 'SIN', 'Clip': 'SIN', 'Micrófono': 'SIN', 'Otros': 'SIN' },
+        : (eq.accesoriosRecepcion || { 'Antena': 'CON', 'Batería': 'CON', 'Cargador': 'SIN', 'Clip': 'SIN', 'Micrófono': 'SIN', 'Otros': 'SIN' }),
       repuestos: eq.repuestos || [],
       fallas: eq.fallas || []
     }))
@@ -248,13 +265,13 @@ function HistorialContent() {
 
       {/* MODAL DE REIMPRESIÓN OFICIAL (PDF / INFORME A4 MEMBRETADO) */}
       {printModalOrder && previewFormData && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-navy/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 animate-fadeIn">
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-navy/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 animate-fadeIn print:p-0 print:bg-white print:static print:overflow-visible">
           <div 
-            className="bg-white w-full max-w-5xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[95vh]"
+            className="bg-white w-full max-w-5xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[95vh] print:max-h-none print:h-auto print:border-none print:shadow-none print:m-0 print:w-full print:max-w-none"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Cabecera del modal de impresión */}
-            <div className="bg-slate-900 text-white p-4 sm:p-5 flex items-center justify-between border-b border-slate-800">
+            <div className="bg-slate-900 text-white p-4 sm:p-5 flex items-center justify-between border-b border-slate-800 print:hidden">
               <div className="flex items-center gap-2">
                 <FileText size={20} className="text-red-500" />
                 <div>
@@ -270,25 +287,25 @@ function HistorialContent() {
               <button
                 type="button"
                 onClick={() => setPrintModalOrder(null)}
-                className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors"
+                className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
               >
                 <X size={20} />
               </button>
             </div>
 
             {/* Vista previa A4 con membrete oficial */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-100">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-100 print:p-0 print:bg-white print:overflow-visible">
               <Step4ReportPreview
                 formData={previewFormData}
               />
             </div>
 
             {/* Pie del modal */}
-            <div className="p-4 bg-white border-t border-slate-200 flex justify-end">
+            <div className="p-4 bg-white border-t border-slate-200 flex justify-end print:hidden">
               <button
                 type="button"
                 onClick={() => setPrintModalOrder(null)}
-                className="btn-secondary py-2 px-5 text-xs font-bold"
+                className="btn-secondary py-2 px-5 text-xs font-bold cursor-pointer"
               >
                 Cerrar Visor
               </button>

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, Suspense } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import {
   ArrowLeft, Wrench, ShieldCheck, Printer, FileDown,
@@ -13,7 +13,7 @@ import Step4ReportPreview from '@/components/orders/Step4ReportPreview';
 import { generateDocxBlob } from '@/lib/utils/docxExport';
 import { formatCurrency, normalizeCurrency } from '@/lib/utils/currencyFormat';
 
-export default function PresupuestoOrdenPage() {
+function PresupuestoOrdenContent() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -26,6 +26,7 @@ export default function PresupuestoOrdenPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [feedback, setFeedback] = useState(null);
   const [userRole, setUserRole] = useState('');
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
 
   useEffect(() => {
     try {
@@ -348,9 +349,9 @@ export default function PresupuestoOrdenPage() {
 
       {/* MODAL DE VISTA PREVIA COMPLETA A4 PARA IMPRIMIR */}
       {showPreviewModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-start p-2 sm:p-4 overflow-y-auto">
-          <div className="w-full max-w-5xl bg-slate-100 rounded-3xl p-4 sm:p-6 space-y-4 shadow-2xl relative my-6">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200 bg-white p-4 rounded-2xl">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-start p-2 sm:p-4 overflow-y-auto print:p-0 print:bg-white print:static print:overflow-visible">
+          <div className="w-full max-w-5xl bg-slate-100 rounded-3xl p-4 sm:p-6 space-y-4 shadow-2xl relative my-6 print:m-0 print:p-0 print:bg-white print:shadow-none print:w-full print:max-w-none">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 bg-white p-4 rounded-2xl print:hidden">
               <div>
                 <h3 className="font-black text-base text-gray-900">
                   Vista Previa del Informe Oficial — Orden #{order.numero_orden || order.id}
@@ -364,7 +365,7 @@ export default function PresupuestoOrdenPage() {
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-red-600 to-red-700 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer"
+                  className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer transition-all"
                 >
                   <Printer size={15} />
                   <span>Imprimir Ahora</span>
@@ -373,7 +374,7 @@ export default function PresupuestoOrdenPage() {
                 <button
                   type="button"
                   onClick={() => setShowPreviewModal(false)}
-                  className="p-2 rounded-xl text-gray-400 hover:bg-slate-100 cursor-pointer"
+                  className="p-2 rounded-xl text-gray-400 hover:bg-slate-100 hover:text-gray-700 cursor-pointer transition-colors"
                 >
                   <X size={20} />
                 </button>
@@ -382,12 +383,30 @@ export default function PresupuestoOrdenPage() {
 
             {/* Componente A4 Report Preview */}
             <Step4ReportPreview
-              formData={order}
+              formData={{
+                ...order,
+                cliente: order.razon_social || order.cliente || '',
+                ordenServicio: order.numero_orden || (order.id ? `OS-${String(order.id).padStart(5, '0')}` : ''),
+                nitCi: order.nit_ci || order.nitCi || ''
+              }}
               updateForm={updateForm}
             />
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+export default function PresupuestoOrdenPage() {
+  return (
+    <Suspense fallback={
+      <div className="py-20 text-center text-gray-400 flex flex-col items-center justify-center gap-2">
+        <Loader2 size={24} className="animate-spin text-[#E30613]" />
+        <span>Cargando expediente de cotización...</span>
+      </div>
+    }>
+      <PresupuestoOrdenContent />
+    </Suspense>
   );
 }

@@ -28,8 +28,8 @@ import {
  */
 export async function generateDocxBlob(formData = {}, currentUser = null) {
   const moneda = normalizeCurrency(formData.moneda || 'BOB');
-  const numeroOrden = formData.ordenServicio || '001';
-  const cliente = (formData.cliente || 'CLIENTE MOSTRADOR').toUpperCase();
+  const numeroOrden = formData.ordenServicio || formData.numero_orden || (formData.id ? String(formData.id) : '001');
+  const cliente = (formData.cliente || formData.razon_social || 'CLIENTE MOSTRADOR').toUpperCase();
   const condiciones = formData.condiciones || {};
 
   const fechaActual = new Date().toLocaleDateString('es-BO', {
@@ -50,8 +50,8 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
       if (r.se_reemplaza) {
         accesoriosList.push({
           equipoIdx: eqIdx,
-          equipoNombre: `${eq.marca} ${eq.modelo || `Eq. ${eqIdx + 1}`}`,
-          nombre: r.nombre,
+          equipoNombre: `${eq.marca || 'Radio'} ${eq.modelo || `Eq. ${eqIdx + 1}`}`,
+          nombre: r.nombre || r.descripcion || 'Repuesto',
           cantidad: parseInt(r.cantidad, 10) || 1,
           precio: parseFloat(r.precio) || 0,
           es_opcional: Boolean(r.es_opcional)
