@@ -29,9 +29,19 @@ export default function Step1Reception({
   const [technicians, setTechnicians] = useState([]);
 
   useEffect(() => {
-    OrdersService.getTechnicians().then(list => {
-      setTechnicians(Array.isArray(list) ? list : []);
-    }).catch(() => {});
+    const loadTechs = () => {
+      OrdersService.getTechnicians().then(list => {
+        setTechnicians(Array.isArray(list) ? list : []);
+      }).catch(() => {});
+    };
+
+    loadTechs();
+    window.addEventListener('americasis_users_updated', loadTechs);
+    window.addEventListener('storage', loadTechs);
+    return () => {
+      window.removeEventListener('americasis_users_updated', loadTechs);
+      window.removeEventListener('storage', loadTechs);
+    };
   }, []);
 
   const [nuevoAccesorioRecepcion, setNuevoAccesorioRecepcion] = useState('');

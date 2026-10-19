@@ -22,6 +22,7 @@ function LoginForm() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [quickUsers, setQuickUsers] = useState(QUICK_TEST_USERS);
   const [errorMessage, setErrorMessage] = useState(
     urlError === 'session_expired'
       ? 'Su sesión ha expirado o fue cerrada en otro dispositivo. Por favor inicie sesión nuevamente.'
@@ -30,6 +31,40 @@ function LoginForm() {
       : ''
   );
   const [successMessage, setSuccessMessage] = useState('');
+
+  // Cargar usuarios locales creados desde Admin (americasis_users)
+  React.useEffect(() => {
+    const loadQuickUsers = () => {
+      try {
+        const local = localStorage.getItem('americasis_users');
+        if (local) {
+          const parsed = JSON.parse(local);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const extra = parsed
+              .filter(u => u.activo !== false)
+              .map(u => ({
+                role: u.rol === 'ADMINISTRADOR' ? 'Admin' : u.rol === 'RECEPCION' ? 'Recepción' : 'Técnico',
+                email: u.email,
+                label: u.nombre_completo || u.email
+              }));
+
+            const map = new Map();
+            QUICK_TEST_USERS.forEach(u => map.set(u.email.toLowerCase(), u));
+            extra.forEach(u => map.set(u.email.toLowerCase(), u));
+            setQuickUsers(Array.from(map.values()));
+          }
+        }
+      } catch (err) {}
+    };
+
+    loadQuickUsers();
+    window.addEventListener('americasis_users_updated', loadQuickUsers);
+    window.addEventListener('storage', loadQuickUsers);
+    return () => {
+      window.removeEventListener('americasis_users_updated', loadQuickUsers);
+      window.removeEventListener('storage', loadQuickUsers);
+    };
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -43,10 +78,19 @@ function LoginForm() {
     setSuccessMessage('');
 
     try {
+      let localUsersPayload = [];
+      try {
+        localUsersPayload = JSON.parse(localStorage.getItem('americasis_users') || '[]');
+      } catch (e) {}
+
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim(), password }),
+        body: JSON.stringify({
+          email: email.trim(),
+          password,
+          localUsers: localUsersPayload
+        }),
       });
 
       const data = await res.json();
@@ -231,16 +275,19 @@ function LoginForm() {
             <Sparkles size={13} className="text-amber-500" />
             <span>Cuentas de Acceso Rápido (Taller):</span>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            {QUICK_TEST_USERS.map((u) => (
+          <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto">
+            {quickUsers.map((u) => (
               <button
                 key={u.email}
                 type="button"
                 onClick={() => handleQuickFill(u.email)}
-                className="text-left px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-red-50/60 hover:border-red-200 border border-slate-200/80 transition-all text-xs cursor-pointer"
+                className="text-left px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-red-50/60 hover:border-red-200 border border-slate-200/80 transition-all text-xs cursor-pointer group"
               >
-                <span className="font-bold text-gray-800 block truncate">{u.label}</span>
-                <span className="text-[10px] text-gray-400 block truncate">{u.email}</span>
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-gray-800 block truncate group-hover:text-red-700">{u.label}</span>
+                  <span className="text-[9px] font-bold text-slate-400 bg-slate-200/60 px-1 rounded uppercase">{u.role}</span>
+                </div>
+                <span className="text-[10px] text-gray-400 block truncate font-mono">{u.email}</span>
               </button>
             ))}
           </div>

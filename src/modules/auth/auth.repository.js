@@ -85,6 +85,39 @@ export const AuthRepository = {
   },
 
   /**
+   * Registra un usuario local (de americasis_users) en la memoria de autenticación
+   */
+  async registerLocalUser(localUser) {
+    if (!localUser || !localUser.email) return null;
+    const cleanEmail = localUser.email.toLowerCase().trim();
+    const existing = mockUsers.find(u => 
+      String(u.id) === String(localUser.id) || 
+      u.email.toLowerCase() === cleanEmail
+    );
+    if (existing) {
+      existing.activo = localUser.activo !== false;
+      existing.rol = localUser.rol || existing.rol;
+      existing.nombre_completo = localUser.nombre_completo || existing.nombre_completo;
+      return existing;
+    }
+
+    const newUser = {
+      id: localUser.id || `b0000000-0000-0000-0000-${String(Date.now()).padStart(12, '0').slice(-12)}`,
+      sucursal_id: localUser.sucursal_id || 'a0000000-0000-0000-0000-000000000001',
+      nombre_completo: localUser.nombre_completo || 'Colaborador Local',
+      email: cleanEmail,
+      password_hash: localUser.password_hash || DEFAULT_PASSWORD_HASH,
+      rol: localUser.rol || 'TECNICO',
+      activo: localUser.activo !== false,
+      token_version: 1,
+      ultimo_login: new Date().toISOString(),
+      creado_en: new Date().toISOString()
+    };
+    mockUsers.push(newUser);
+    return newUser;
+  },
+
+  /**
    * Busca un usuario por ID
    */
   async findById(id) {

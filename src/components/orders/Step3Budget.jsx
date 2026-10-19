@@ -7,6 +7,7 @@ import {
   Info, Check, ChevronRight, Lock
 } from 'lucide-react';
 import EquipmentTabs from '@/components/orders/EquipmentTabs';
+import RepuestoCombobox from '@/components/common/RepuestoCombobox';
 import {
   formatCurrency,
   getImporteLiteral,
@@ -234,6 +235,57 @@ export default function Step3Budget({
     }
   };
 
+  // Añadir un repuesto o accesorio directamente desde el catálogo interactivo
+  const handleAgregarRepuestoCatalogo = (item) => {
+    if (isTecnico) return;
+    const targetEq = formData.equipos[activeEquipoIndex];
+    if (!targetEq) return;
+
+    const repuestos = [...(targetEq.repuestos || [])];
+    const precio = item.precioCalculado !== undefined
+      ? item.precioCalculado
+      : (moneda === 'USD' ? item.precio_usd : item.precio_bs);
+
+    const existingIdx = repuestos.findIndex(r => (r.nombre || '').toLowerCase() === item.nombre.toLowerCase());
+    if (existingIdx >= 0) {
+      repuestos[existingIdx] = {
+        ...repuestos[existingIdx],
+        cantidad: (parseInt(repuestos[existingIdx].cantidad, 10) || 1) + 1,
+        se_reemplaza: true
+      };
+    } else {
+      repuestos.push({
+        id: `rep-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        nombre: item.nombre,
+        categoria: item.categoria || 'Repuestos',
+        cantidad: 1,
+        precio: precio,
+        se_reemplaza: true,
+        es_opcional: false,
+        modelo_compatible: item.modelo_compatible || ''
+      });
+    }
+
+    updateEquipo(activeEquipoIndex, { repuestos });
+  };
+
+  // Eliminar un accesorio cotizado
+  const handleEliminarAccesorio = (accItem) => {
+    if (isTecnico) return;
+    const eq = formData.equipos[accItem.equipoIdx];
+    if (!eq) return;
+
+    const repuestos = (eq.repuestos || []).filter(r => r.nombre !== accItem.nombre);
+    const updates = { repuestos };
+    if (accItem.nombre.toLowerCase().includes('antena') && eq.antenaEstado === 'REEMPLAZO') {
+      updates.antenaEstado = 'OPERATIVA';
+    }
+    if (accItem.nombre.toLowerCase().includes('bater') && eq.bateriaEstado === 'REEMPLAZO') {
+      updates.bateriaEstado = 'OPERATIVA';
+    }
+    updateEquipo(accItem.equipoIdx, updates);
+  };
+
   // Subtotal 2 de accesorios (suma todos los accesorios cotizados)
   const subtotal2 = useMemo(() => {
     return todosAccesorios.reduce((sum, item) => {
@@ -430,9 +482,29 @@ export default function Step3Budget({
               </div>
             </div>
 
+            {/* Buscador Rápido Combobox de Repuestos y Accesorios */}
+            {!isTecnico && (
+              <div className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <label className="text-xs font-bold text-gray-700 uppercase flex items-center gap-1.5">
+                    <ShieldCheck size={14} className="text-blue-600" />
+                    <span>Añadir Accesorio o Repuesto del Catálogo:</span>
+                  </label>
+                  <span className="text-[11px] text-gray-400 font-medium">
+                    Asignado a: <strong className="text-gray-700">{equipo.marca} {equipo.modelo || `Eq. #${activeEquipoIndex + 1}`}</strong>
+                  </span>
+                </div>
+                <RepuestoCombobox
+                  moneda={moneda}
+                  placeholder={`Buscar repuesto compatible con ${equipo.modelo || 'radio'} (ej: Batería, Antena, PTT, Clip)...`}
+                  onSelect={handleAgregarRepuestoCatalogo}
+                />
+              </div>
+            )}
+
             {todosAccesorios.length === 0 ? (
               <div className="p-6 text-center text-gray-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-xs">
-                No hay accesorios o repuestos marcados con reemplazo para esta orden.
+                No hay accesorios o repuestos marcados con reemplazo para esta orden. Utilice el buscador superior para agregar ítems.
               </div>
             ) : (
               <div className="space-y-3">
@@ -498,9 +570,21 @@ export default function Step3Budget({
                         </label>
 
                         {/* Total Línea */}
-                        <span className="font-mono font-black text-gray-900 min-w-[90px] text-right">
+                        <span className="font-mono font-black text-gray-900 min-w-[80px] text-right">
                           {formatCurrency(itemSubtotal, moneda)}
                         </span>
+
+                        {/* Botón Eliminar */}
+                        {!isTecnico && (
+                          <button
+                            type="button"
+                            onClick={() => handleEliminarAccesorio(item)}
+                            className="p-1 text-gray-400 hover:text-red-600 rounded-lg transition-colors cursor-pointer"
+                            title="Quitar accesorio cotizado"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
                       </div>
                     </div>
                   );

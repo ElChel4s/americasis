@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import QrMobileModal from '@/components/modals/QrMobileModal';
 import ImageCropModal from '@/components/modals/ImageCropModal';
+import RepuestoCombobox from '@/components/common/RepuestoCombobox';
 
 // Lista de los 10 accesorios estándar requeridos
 const ACCESORIOS_DEFAULT = [
@@ -276,24 +277,57 @@ export default function Step2Diagnosis({
     setTextoDiagnostico((prev) => prev ? `${prev.trim()}. ${texto}` : texto);
   };
 
-  // Generador automático de texto técnico basado en fallas y repuestos
+  // Generador automático de texto técnico basado en fallas y repuestos (Fase 2 / Fase 4)
   const sintetizarTextoTecnico = (fallas, repuestosList) => {
-    if (fallas.length === 0) {
-      return `Se procedió con la verificación de recepción y transmisión del equipo ${equipo.modelo || 'radio'}. El equipo no presenta fallas críticas aparentes en placa lógica; se recomienda mantenimiento preventivo, limpieza ultrasónica y ajuste-calibración de parámetros de RF.`;
+    const lineas = [];
+
+    if (!fallas || fallas.length === 0) {
+      lineas.push('- El equipo presenta desgaste por uso operativo, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.');
+    } else if (fallas.length === 1) {
+      const fName = (fallas[0].label || fallas[0].descripcion || 'componente de placa').toLowerCase();
+      lineas.push(`- El equipo presenta falla en ${fName}, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.`);
+    } else {
+      const lista = fallas.map(f => (f.label || f.descripcion || 'componente de placa').toLowerCase()).join(', ');
+      lineas.push(`- El equipo presenta fallas en: ${lista}, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.`);
     }
 
-    const nombresFallas = fallas.map(f => (f.label || f.descripcion || '').toLowerCase()).filter(Boolean).join(', ');
-    const acciones = fallas.map(f => `revisión y reparación de ${(f.label || f.descripcion || '').toLowerCase()}`).join(', ');
+    // Viñetas adicionales de antena, batería u otros repuestos sugeridos
+    (repuestosList || []).forEach(r => {
+      const nombreLow = (r.nombre || '').toLowerCase();
+      if (r.se_reemplaza) {
+        if (nombreLow.includes('anten')) {
+          lineas.push('- La antena presenta desgaste por uso, pero está funcionando con normalidad, se recomienda su reemplazo, se cotizará en forma opcional.');
+        } else if (nombreLow.includes('bater')) {
+          const cap = r.porcentaje_carga !== null && r.porcentaje_carga !== undefined ? r.porcentaje_carga : (parseInt(equipo.bateriaCarga, 10) || 45);
+          lineas.push(`- La batería tiene una capacidad de carga del ${cap}% se debe reemplazar, se cotizará en accesorios.`);
+        } else {
+          lineas.push(`- Se sugiere reemplazo de ${r.nombre} (${r.falla_detalle || r.estado_condicion || 'Desgaste operativo'}).`);
+        }
+      }
+    });
 
-    let texto = `Se procedió con la inspección en banco de trabajo del equipo ${equipo.modelo || 'radio'}. Se detectaron anomalías en: ${nombresFallas}. Corresponde realizar ${acciones}, además de limpieza técnica profunda y calibración de modulación/potencia en monitor de servicio.`;
+    return lineas.join('\n');
+  };
 
-    const piezasParaCambio = (repuestosList || []).filter(r => r.se_reemplaza);
-    if (piezasParaCambio.length > 0) {
-      const items = piezasParaCambio.map(p => `${p.nombre || 'Pieza'} (${p.falla_detalle || p.estado_condicion || 'Reemplazo'})`).join(', ');
-      texto += `\n\nRepuestos con reemplazo sugerido: ${items}.`;
-    }
+  const handleAgregarRepuestoCatalogo = (item) => {
+    const nuevo = {
+      id: `rep-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      nombre: item.nombre,
+      estado_condicion: 'Se sugiere reemplazo',
+      se_reemplaza: true,
+      porcentaje_carga: item.nombre.toLowerCase().includes('bater') ? 100 : null,
+      falla_detalle: `Reemplazo recomendado (${item.categoria || 'Repuesto'})`,
+      repuesto_sugerido: item.nombre,
+      cantidad: 1,
+      precio: item.precioCalculado || (moneda === 'USD' ? item.precio_usd : item.precio_bs),
+      es_manual: true,
+      recibido_mostrador: false
+    };
 
-    return texto;
+    const updated = [...repuestos, nuevo];
+    setRepuestos(updated);
+    const nuevoTexto = sintetizarTextoTecnico(fallasSeleccionadas, updated);
+    setTextoDiagnostico(nuevoTexto);
   };
 
   // Manejo de condición en accesorios: Operativa / Dañado/Roto / Se sugiere reemplazo
@@ -695,6 +729,18 @@ export default function Step2Diagnosis({
             );
           })}
 
+          {/* Buscador de Repuestos del Catálogo */}
+          <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-2">
+            <label className="block text-xs font-bold text-gray-700 uppercase">
+              Buscar y Añadir Repuesto Técnico del Catálogo:
+            </label>
+            <RepuestoCombobox
+              moneda={moneda}
+              placeholder="Buscar en catálogo oficial (ej: Batería, PTT, Diodo PIN, Amplificador Audio)..."
+              onSelect={handleAgregarRepuestoCatalogo}
+            />
+          </div>
+
           {/* Botón de Agregar Accesorio Manual */}
           <button
             type="button"
@@ -702,7 +748,7 @@ export default function Step2Diagnosis({
             className="w-full py-3.5 border-2 border-dashed border-slate-200 hover:border-slate-300 rounded-2xl text-xs sm:text-sm font-bold text-gray-600 hover:text-gray-900 hover:bg-slate-50/60 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-2xs"
           >
             <Plus size={16} className="text-gray-400" />
-            <span>+ Agregar accesorio manual</span>
+            <span>+ Agregar accesorio manual libre</span>
           </button>
         </div>
       </div>

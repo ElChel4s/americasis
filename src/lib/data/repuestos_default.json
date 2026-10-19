@@ -1,0 +1,218 @@
+[
+  {
+    "id": "REP-BAT-001",
+    "nombre": "Batería Li-Ion NNTN4497 (7.4V 2250mAh)",
+    "modelo_compatible": "Motorola DEP450 / EP450 / CP200",
+    "precio_usd": 45,
+    "precio_bs": 313,
+    "categoria": "Baterías"
+  },
+  {
+    "id": "REP-BAT-002",
+    "nombre": "Batería Li-Ion PMNN4409AR IMPRES (2150mAh)",
+    "modelo_compatible": "Motorola DGP8550 / DGP5550 / XPR7550",
+    "precio_usd": 75,
+    "precio_bs": 522,
+    "categoria": "Baterías"
+  },
+  {
+    "id": "REP-BAT-003",
+    "nombre": "Batería NiMH PMNN4077 (7.2V 1800mAh)",
+    "modelo_compatible": "Motorola PRO5150 / PRO7150 / GP328",
+    "precio_usd": 40,
+    "precio_bs": 278,
+    "categoria": "Baterías"
+  },
+  {
+    "id": "REP-BAT-004",
+    "nombre": "Batería Li-Ion FNB-V134LI (7.4V 2300mAh)",
+    "modelo_compatible": "Vertex Standard VX-261 / VX-264 / EVX-261",
+    "precio_usd": 48,
+    "precio_bs": 334,
+    "categoria": "Baterías"
+  },
+  {
+    "id": "REP-BAT-005",
+    "nombre": "Batería Li-Ion KNB-45L (7.4V 2000mAh)",
+    "modelo_compatible": "Kenwood TK-2207 / TK-3207 / TK-2000 / TK-3000",
+    "precio_usd": 42,
+    "precio_bs": 292,
+    "categoria": "Baterías"
+  },
+  {
+    "id": "REP-BAT-006",
+    "nombre": "Batería Li-Ion BP-265 (7.4V 1900mAh)",
+    "modelo_compatible": "Icom IC-V80 / IC-U80 / IC-F3003",
+    "precio_usd": 45,
+    "precio_bs": 313,
+    "categoria": "Baterías"
+  },
+  {
+    "id": "REP-ANT-001",
+    "nombre": "Antena Helicoidal VHF 136-174 MHz (PMAD4014)",
+    "modelo_compatible": "Motorola DEP450 / EP450 / PRO5150 / CP200",
+    "precio_usd": 15,
+    "precio_bs": 105,
+    "categoria": "Antenas"
+  },
+  {
+    "id": "REP-ANT-002",
+    "nombre": "Antena Larga Látigo VHF 136-174 MHz (PMAE4016)",
+    "modelo_compatible": "Motorola DGP8550 / DGP5550 / DGP8050",
+    "precio_usd": 20,
+    "precio_bs": 139,
+    "categoria": "Antenas"
+  },
+  {
+    "id": "REP-ANT-003",
+    "nombre": "Antena Stubby Corta UHF 403-470 MHz (PMAE4003)",
+    "modelo_compatible": "Motorola DEP450 / EP450 / PRO5150",
+    "precio_usd": 14,
+    "precio_bs": 97,
+    "categoria": "Antenas"
+  },
+  {
+    "id": "REP-ANT-004",
+    "nombre": "Antena Goma VHF Conector SMA-Macho (ATV-8B)",
+    "modelo_compatible": "Vertex Standard VX-261 / VX-231 / VX-451",
+    "precio_usd": 16,
+    "precio_bs": 111,
+    "categoria": "Antenas"
+  },
+  {
+    "id": "REP-ANT-005",
+    "nombre": "Antena Móvil VHF 5/8 Onda 3dB con Base Magnética",
+    "modelo_compatible": "Yaesu FT-2980R / FT-1900R / Motorola EM200",
+    "precio_usd": 38,
+    "precio_bs": 264,
+    "categoria": "Antenas"
+  },
+  {
+    "id": "REP-CLP-001",
+    "nombre": "Clip de Cinturón de Resorte 2.5 Pulgadas (HLN8255)",
+    "modelo_compatible": "Motorola DEP450 / EP450 / PRO5150 / CP200",
+    "precio_usd": 8,
+    "precio_bs": 56,
+    "categoria": "Clips y Chasis"
+  },
+  {
+    "id": "REP-CLP-002",
+    "nombre": "Clip de Cinturón de Alta Resistencia (PMLN4651)",
+    "modelo_compatible": "Motorola DGP8550 / DGP5550 / XPR7550",
+    "precio_usd": 12,
+    "precio_bs": 84,
+    "categoria": "Clips y Chasis"
+  },
+  {
+    "id": "REP-CLP-003",
+    "nombre": "Clip de Cinturón Tipo Pinza (CLIP-20)",
+    "modelo_compatible": "Vertex Standard VX-261 / EVX-261",
+    "precio_usd": 9,
+    "precio_bs": 63,
+    "categoria": "Clips y Chasis"
+  },
+  {
+    "id": "REP-PTT-001",
+    "nombre": "Pulsador Táctil Lateral Microswitch PTT SMD",
+    "modelo_compatible": "Motorola DEP450 / EP450 / PRO5150 / Yaesu",
+    "precio_usd": 10,
+    "precio_bs": 70,
+    "categoria": "Pulsadores y Conmutadores"
+  },
+  {
+    "id": "REP-PTT-002",
+    "nombre": "Goma y Fleje Bisel PTT Sellado Antipolvo",
+    "modelo_compatible": "Motorola DEP450 / EP450",
+    "precio_usd": 12,
+    "precio_bs": 84,
+    "categoria": "Pulsadores y Conmutadores"
+  },
+  {
+    "id": "REP-DIO-001",
+    "nombre": "Diodo PIN RF de Conmutación TX/RX (MA4P7002F)",
+    "modelo_compatible": "Universal Handy VHF/UHF / Motorola / Kenwood",
+    "precio_usd": 15,
+    "precio_bs": 105,
+    "categoria": "Semiconductores y RF"
+  },
+  {
+    "id": "REP-DIO-002",
+    "nombre": "Diodo Schottky de Protección Inversa (BAT54S)",
+    "modelo_compatible": "Universal Circuitos Lógicos de Radio",
+    "precio_usd": 6,
+    "precio_bs": 42,
+    "categoria": "Semiconductores y RF"
+  },
+  {
+    "id": "REP-IC-001",
+    "nombre": "Circuito Integrado Amplificador de Audio BTL (TDA7052AT)",
+    "modelo_compatible": "Motorola PRO5150 / EP450 / Vertex",
+    "precio_usd": 18,
+    "precio_bs": 125,
+    "categoria": "Circuitos Integrados"
+  },
+  {
+    "id": "REP-IC-002",
+    "nombre": "Módulo de Potencia RF PA 80W (SAV-36 / RA60H1317M)",
+    "modelo_compatible": "Yaesu FT-2980R / FT-2900R / FT-1900R",
+    "precio_usd": 68,
+    "precio_bs": 473,
+    "categoria": "Semiconductores y RF"
+  },
+  {
+    "id": "REP-AUD-001",
+    "nombre": "Altavoz / Cono de Parlante 16 Ohms 1W Membrana Mylar",
+    "modelo_compatible": "Motorola DEP450 / EP450 / CP200",
+    "precio_usd": 14,
+    "precio_bs": 97,
+    "categoria": "Audio y Micrófonos"
+  },
+  {
+    "id": "REP-AUD-002",
+    "nombre": "Cápsula Micrófono Electret Cancelación de Ruido",
+    "modelo_compatible": "Universal Handies Motorola / Kenwood / Vertex",
+    "precio_usd": 9,
+    "precio_bs": 63,
+    "categoria": "Audio y Micrófonos"
+  },
+  {
+    "id": "REP-AUD-003",
+    "nombre": "Micrófono de Palma DTMF 8-Pines (MH-48A6J)",
+    "modelo_compatible": "Yaesu FT-2980R / FT-1900R / FT-7900R",
+    "precio_usd": 35,
+    "precio_bs": 244,
+    "categoria": "Audio y Micrófonos"
+  },
+  {
+    "id": "REP-POT-001",
+    "nombre": "Potenciómetro de Volumen con Interruptor On/Off (10 kOhm)",
+    "modelo_compatible": "Motorola DEP450 / EP450 / PRO5150",
+    "precio_usd": 15,
+    "precio_bs": 105,
+    "categoria": "Pulsadores y Conmutadores"
+  },
+  {
+    "id": "REP-POT-002",
+    "nombre": "Selector Rotativo de Canales 16 Posiciones",
+    "modelo_compatible": "Motorola DEP450 / EP450 / PRO5150",
+    "precio_usd": 16,
+    "precio_bs": 111,
+    "categoria": "Pulsadores y Conmutadores"
+  },
+  {
+    "id": "REP-CRG-001",
+    "nombre": "Base de Cargador Rápido con Transformador 220V (WPLN4137)",
+    "modelo_compatible": "Motorola DEP450 / EP450 / CP200",
+    "precio_usd": 32,
+    "precio_bs": 223,
+    "categoria": "Cargadores y Fuentes"
+  },
+  {
+    "id": "REP-CRG-002",
+    "nombre": "Cable de Poder DC con Portafusibles Doble 12V 25A",
+    "modelo_compatible": "Yaesu FT-2980R / FT-1900R / Motorola Base Móvil",
+    "precio_usd": 18,
+    "precio_bs": 125,
+    "categoria": "Cargadores y Fuentes"
+  }
+]

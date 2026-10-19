@@ -64,51 +64,43 @@ const safeSaveLocalStorage = (orders) => {
     console.warn('[OrdersService] QuotaExceededError detectado. Activando fallback de fotos en memoria RAM...');
   }
 
-  // Intento 2: Respaldar fotos en memoria RAM y guardar versión aligerada en disco
+  // Intento 2: Conservar las primeras 5 órdenes completas (órdenes activas en taller)
+  // y solo aligerar las fotos de órdenes históricas antiguas (> índice 4)
   try {
-    const strippedOrders = orders.map((order) => {
-      const orderKey = String(order.id || order.numero_orden || '');
-      const imagesForMemory = [];
-
-      const sanitizedEquipos = (order.equipos || []).map((eq, eqIdx) => {
-        if (Array.isArray(eq.imagenes) && eq.imagenes.length > 0) {
-          imagesForMemory.push({ equipoIndex: eqIdx, imagenes: eq.imagenes });
-
-          // En localStorage solo dejamos metadatos ligeros (sin Data URLs pesados)
-          const lightImages = eq.imagenes.map(img => ({
-            id: img.id,
-            name: img.name,
-            etapa: img.etapa,
-            sizeKb: img.sizeKb || null,
-            // Conservar URL solo si no es un Base64 pesado local
-            url: (typeof img.url === 'string' && !img.url.startsWith('data:')) ? img.url : ''
-          }));
-          return { ...eq, imagenes: lightImages };
-        }
-        return eq;
-      });
-
-      if (orderKey && imagesForMemory.length > 0) {
-        inMemoryOrderImages.set(orderKey, imagesForMemory);
+    const strippedOrders = orders.map((order, orderIdx) => {
+      // Las 5 órdenes más recientes conservan 100% sus fotos completas
+      if (orderIdx < 5) {
+        return order;
       }
-
+      // Para órdenes antiguas del historial, aligerar para respetar cuota
+      const sanitizedEquipos = (order.equipos || []).map(eq => ({
+        ...eq,
+        imagenes: (eq.imagenes || []).map(img => ({
+          ...img,
+          url: (typeof img.url === 'string' && !img.url.startsWith('data:')) ? img.url : ''
+        })),
+        imagenesInternas: (eq.imagenesInternas || []).map(img => ({
+          ...img,
+          url: (typeof img.url === 'string' && !img.url.startsWith('data:')) ? img.url : ''
+        }))
+      }));
       return { ...order, equipos: sanitizedEquipos };
     });
 
     const lightSerialized = JSON.stringify(strippedOrders);
     localStorage.setItem(STORAGE_KEY, lightSerialized);
     try { localStorage.setItem(LEGACY_STORAGE_KEY, lightSerialized); } catch (e) {}
-    console.info('[OrdersService] Órdenes guardadas en localStorage con imágenes aligeradas.');
+    console.info('[OrdersService] Órdenes guardadas en localStorage preservando fotos de órdenes activas.');
     return true;
   } catch (fallbackErr) {
-    console.warn('[OrdersService] Fallback 2: Podando órdenes históricas...', fallbackErr);
+    console.warn('[OrdersService] Fallback 2: Reduciendo cuota histórica...', fallbackErr);
   }
 
-  // Intento 3: Guardar últimas 15 órdenes sin imágenes para salvar datos críticos
+  // Intento 3: Guardar últimas 15 órdenes aligeradas para salvar datos críticos
   try {
     const ultraLightOrders = orders.slice(0, 15).map(o => ({
       ...o,
-      equipos: (o.equipos || []).map(eq => ({ ...eq, imagenes: [] }))
+      equipos: (o.equipos || []).map(eq => ({ ...eq, imagenes: [], imagenesInternas: [] }))
     }));
     localStorage.setItem(STORAGE_KEY, JSON.stringify(ultraLightOrders));
     return true;
@@ -270,7 +262,7 @@ export const OrdersService = {
             otros_descripcion: eq.otrosDescripcion || null
           }));
 
-      const safeImagenes = (eq.imagenes || []).map((img, imgIdx) => ({
+      const safeImagenes = (eq.imagenes || eq.imagenesRecepcion || []).map((img, imgIdx) => ({
         id: img.id || `img-${i}-${imgIdx}-${Date.now()}`,
         url: typeof img.url === 'string' ? img.url : '',
         name: img.name || `Evidencia ${imgIdx + 1}`,
@@ -278,8 +270,18 @@ export const OrdersService = {
         sizeKb: img.sizeKb || null
       }));
 
+      const safeImagenesInternas = (eq.imagenesInternas || eq.imagenesDiagnostico || []).map((img, imgIdx) => ({
+        id: img.id || `img-int-${i}-${imgIdx}-${Date.now()}`,
+        url: typeof img.url === 'string' ? img.url : '',
+        name: img.name || `Diagnóstico ${imgIdx + 1}`,
+        etapa: img.etapa || 'DIAGNOSTICO',
+        sizeKb: img.sizeKb || null
+      }));
+
       return {
         ...eq,
+        id: eq.id || `eq-${Date.now()}-${i}`,
+        tempId: eq.tempId || eq.id || `eq-${Date.now()}-${i}`,
         orden_indice: i + 1,
         marca: eq.marca || 'Motorola',
         modelo: eq.modelo || '',
@@ -288,8 +290,18 @@ export const OrdersService = {
         banda: eq.banda || 'VHF',
         falla_declarada_cliente: eq.falla_declarada_cliente || '',
         costo_servicio: parseFloat(eq.costo_servicio) || 0,
+        descripcion_servicio: eq.descripcion_servicio || 'Mantenimiento preventivo y calibración RF',
+        reparacion_rechazada: Boolean(eq.reparacion_rechazada),
+        motivo_rechazo: eq.motivo_rechazo || null,
+        texto_diagnostico: eq.texto_diagnostico || '',
+        notas_adicionales: eq.notas_adicionales || '',
         accesorios: accs,
-        imagenes: safeImagenes
+        fallas: eq.fallas || [],
+        repuestos: eq.repuestos || [],
+        imagenes: safeImagenes,
+        imagenesRecepcion: safeImagenes,
+        imagenesInternas: safeImagenesInternas,
+        imagenesDiagnostico: safeImagenesInternas
       };
     });
 
@@ -636,10 +648,25 @@ export const OrdersService = {
         ...orders[index],
         ...payload.reception,
         total_equipos: sanitizedEquipos.length,
-        equipos: sanitizedEquipos.map((eq, idx) => ({
-          ...(orders[index].equipos?.[idx] || {}),
-          ...eq
-        })),
+        equipos: sanitizedEquipos.map((eq, idx) => {
+          const prev = (orders[index].equipos || []).find(e => 
+            (eq.id && String(e.id) === String(eq.id)) || 
+            (eq.tempId && String(e.tempId) === String(eq.tempId))
+          ) || orders[index].equipos?.[idx] || {};
+          return {
+            ...prev,
+            ...eq,
+            id: eq.id || prev.id || `eq-${Date.now()}-${idx}`,
+            tempId: eq.tempId || prev.tempId || eq.id || prev.id,
+            orden_indice: idx + 1,
+            fallas: eq.fallas || prev.fallas || [],
+            repuestos: eq.repuestos || prev.repuestos || [],
+            imagenes: eq.imagenes || prev.imagenes || [],
+            imagenesRecepcion: eq.imagenesRecepcion || eq.imagenes || prev.imagenesRecepcion || prev.imagenes || [],
+            imagenesInternas: eq.imagenesInternas || prev.imagenesInternas || [],
+            imagenesDiagnostico: eq.imagenesDiagnostico || eq.imagenesInternas || prev.imagenesDiagnostico || prev.imagenesInternas || []
+          };
+        }),
         updatedAt: new Date().toISOString()
       };
       safeSaveLocalStorage(orders);
@@ -661,21 +688,46 @@ export const OrdersService = {
    * Obtiene la lista de técnicos disponibles para asignación
    */
   getTechnicians: async () => {
+    let list = [];
     try {
       const res = await fetch('/api/users');
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
-          return json.data.filter(u => u.rol === 'TECNICO' && u.activo !== false);
+          list = json.data.filter(u => u.rol === 'TECNICO' && u.activo !== false);
         }
       }
     } catch (e) {}
 
-    // Fallback con personal por defecto
-    return [
-      { id: 'b0000000-0000-0000-0000-000000000002', nombre_completo: 'Roberto Gómez (Técnico RF)', email: 'tecnico' },
-      { id: 'b0000000-0000-0000-0000-000000000004', nombre_completo: 'Carlos Mamani (Laboratorio RF)', email: 'cmamani' }
-    ];
+    // Fallback con personal base
+    if (list.length === 0) {
+      list = [
+        { id: 'b0000000-0000-0000-0000-000000000002', nombre_completo: 'Roberto Gómez (Técnico RF)', email: 'tecnico' },
+        { id: 'b0000000-0000-0000-0000-000000000004', nombre_completo: 'Carlos Mamani (Laboratorio RF)', email: 'cmamani' }
+      ];
+    }
+
+    // Integrar inmediatamente personal persistido en 'americasis_users'
+    if (typeof window !== 'undefined') {
+      try {
+        const local = localStorage.getItem('americasis_users');
+        if (local) {
+          const parsed = JSON.parse(local);
+          if (Array.isArray(parsed)) {
+            parsed.forEach(u => {
+              if (u.rol === 'TECNICO' && u.activo !== false) {
+                const exists = list.some(t => String(t.id) === String(u.id) || (t.email && u.email && t.email.toLowerCase() === u.email.toLowerCase()));
+                if (!exists) {
+                  list.push(u);
+                }
+              }
+            });
+          }
+        }
+      } catch (err) {}
+    }
+
+    return list;
   },
 
   /**

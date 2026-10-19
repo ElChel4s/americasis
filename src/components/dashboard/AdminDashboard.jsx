@@ -50,11 +50,16 @@ export default function AdminDashboard({ onNewOrder }) {
   useEffect(() => {
     fetchOrders(false);
 
-    OrdersService.getTechnicians().then(list => {
-      setTechnicians(Array.isArray(list) ? list : []);
-    }).catch(err => {
-      console.warn('Error al cargar técnicos en admin:', err);
-    });
+    const loadTechs = () => {
+      OrdersService.getTechnicians().then(list => {
+        setTechnicians(Array.isArray(list) ? list : []);
+      }).catch(err => {
+        console.warn('Error al cargar técnicos en admin:', err);
+      });
+    };
+
+    loadTechs();
+    window.addEventListener('americasis_users_updated', loadTechs);
 
     // Auto-sincronización silenciosa y discreta en segundo plano cada 10 segundos
     const syncInterval = setInterval(() => {
@@ -77,6 +82,7 @@ export default function AdminDashboard({ onNewOrder }) {
       clearInterval(syncInterval);
       window.removeEventListener('focus', handleFocus);
       window.removeEventListener('america_orders_updated', handleOrdersUpdated);
+      window.removeEventListener('americasis_users_updated', loadTechs);
       window.removeEventListener('storage', handleOrdersUpdated);
     };
   }, []);

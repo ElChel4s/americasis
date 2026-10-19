@@ -49,16 +49,48 @@ export default function UsuariosPage() {
     setTimeout(() => setFeedback(null), 4000);
   };
 
+  const mergeLocalUsers = (serverUsers = []) => {
+    try {
+      const local = localStorage.getItem('americasis_users');
+      if (local) {
+        const parsed = JSON.parse(local);
+        if (Array.isArray(parsed)) {
+          const map = new Map();
+          serverUsers.forEach(u => map.set(String(u.id), u));
+          parsed.forEach(u => {
+            if (!map.has(String(u.id))) {
+              map.set(String(u.id), u);
+            }
+          });
+          return Array.from(map.values());
+        }
+      }
+    } catch (e) {}
+    return serverUsers;
+  };
+
+  const syncLocalUsersStorage = (updatedUsers) => {
+    try {
+      localStorage.setItem('americasis_users', JSON.stringify(updatedUsers));
+      window.dispatchEvent(new CustomEvent('americasis_users_updated', { detail: updatedUsers }));
+    } catch (e) {}
+  };
+
   const fetchUsers = async () => {
     try {
       const res = await fetch('/api/users');
       const data = await res.json();
       if (data.success) {
-        setUsers(data.data || []);
+        const combined = mergeLocalUsers(data.data || []);
+        setUsers(combined);
       } else {
+        const combined = mergeLocalUsers([]);
+        setUsers(combined);
         showFeedback(data.message || 'Error al cargar usuarios', 'error');
       }
     } catch (err) {
+      const combined = mergeLocalUsers([]);
+      setUsers(combined);
       showFeedback('Error de comunicación con el servidor', 'error');
     } finally {
       setLoading(false);
@@ -66,19 +98,7 @@ export default function UsuariosPage() {
   };
 
   useEffect(() => {
-    let isMounted = true;
-    fetch('/api/users')
-      .then(res => res.json())
-      .then(data => {
-        if (isMounted) {
-          if (data.success) setUsers(data.data || []);
-          setLoading(false);
-        }
-      })
-      .catch(() => {
-        if (isMounted) setLoading(false);
-      });
-    return () => { isMounted = false; };
+    fetchUsers();
   }, []);
 
   // Métricas superiores (KPIs)
@@ -116,7 +136,11 @@ export default function UsuariosPage() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setUsers(prev => prev.map(u => (u.id === user.id ? { ...u, activo: newStatus } : u)));
+        setUsers(prev => {
+          const next = prev.map(u => (u.id === user.id ? { ...u, activo: newStatus } : u));
+          syncLocalUsersStorage(next);
+          return next;
+        });
         showFeedback(
           `Cuenta de ${user.nombre_completo} ${newStatus ? 'activada' : 'desactivada (sesiones invalidadas)'}.`,
           'success'
@@ -414,9 +438,13 @@ export default function UsuariosPage() {
         <ModalRegistrarUsuario
           onClose={() => setShowCreateModal(false)}
           onSuccess={(newUser) => {
-            setUsers(prev => [newUser, ...prev]);
+            setUsers(prev => {
+              const updated = [newUser, ...prev.filter(u => String(u.id) !== String(newUser.id))];
+              syncLocalUsersStorage(updated);
+              return updated;
+            });
             setShowCreateModal(false);
-            showFeedback(`Trabajador ${newUser.nombre_completo} creado con éxito`);
+            showFeedback(`Trabajador ${newUser.nombre_completo} creado y registrado en americasis_users`);
           }}
         />
       )}
@@ -427,7 +455,11 @@ export default function UsuariosPage() {
           user={editingUser}
           onClose={() => setEditingUser(null)}
           onSuccess={(updatedUser) => {
-            setUsers(prev => prev.map(u => (u.id === updatedUser.id ? updatedUser : u)));
+            setUsers(prev => {
+              const updated = prev.map(u => (u.id === updatedUser.id ? updatedUser : u));
+              syncLocalUsersStorage(updated);
+              return updated;
+            });
             setEditingUser(null);
             showFeedback(`Datos de ${updatedUser.nombre_completo} actualizados`);
           }}

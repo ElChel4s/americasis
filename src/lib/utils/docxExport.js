@@ -10,7 +10,10 @@ import {
   WidthType,
   BorderStyle,
   PageBreak,
-  HeadingLevel
+  HeadingLevel,
+  Header,
+  Footer,
+  ImageRun
 } from 'docx';
 import {
   formatCurrency,
@@ -21,12 +24,37 @@ import {
 } from './currencyFormat.js';
 
 /**
+ * Helper para cargar bytes de imagen tanto en navegador como en entorno Node.js
+ */
+async function getImageBytes(urlOrPath) {
+  if (typeof window !== 'undefined') {
+    const res = await fetch(urlOrPath);
+    const blob = await res.blob();
+    return new Uint8Array(await blob.arrayBuffer());
+  } else {
+    const fs = await import('fs');
+    const path = await import('path');
+    const fullPath = path.join(process.cwd(), 'public', urlOrPath.replace(/^\//, ''));
+    return fs.readFileSync(fullPath);
+  }
+}
+
+/**
  * Genera el documento oficial .docx con exactitud milimétrica
  * @param {Object} formData
  * @param {Object} currentUser
  * @returns {Promise<Blob>}
  */
 export async function generateDocxBlob(formData = {}, currentUser = null) {
+  // 0. Cargar membretes oficiales para encabezado y pie de página
+  let headerImgBytes = null;
+  let footerImgBytes = null;
+  try {
+    headerImgBytes = await getImageBytes('/images/header_membrete.png');
+    footerImgBytes = await getImageBytes('/images/footer_membrete.png');
+  } catch (err) {
+    console.warn('[docxExport] No se pudieron cargar membretes PNG:', err);
+  }
   const moneda = normalizeCurrency(formData.moneda || 'BOB');
   const numeroOrden = formData.ordenServicio || formData.numero_orden || (formData.id ? String(formData.id) : '001');
   const cliente = (formData.cliente || formData.razon_social || 'CLIENTE MOSTRADOR').toUpperCase();
@@ -122,32 +150,8 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
   // Párrafos del documento
   const paragraphs = [];
 
-  // Encabezado
+  // Fecha y Destinatario (el membrete visual superior va en el Header de sección)
   paragraphs.push(
-    new Paragraph({
-      alignment: AlignmentType.CENTER,
-      children: [
-        new TextRun({
-          text: 'AMERICA SISTEMAS DE COMUNICACIÓN KEMLO SRL',
-          bold: true,
-          size: 26,
-          color: '0B1B2B'
-        })
-      ],
-      spacing: { after: 100 }
-    }),
-    new Paragraph({
-      alignment: AlignmentType.CENTER,
-      children: [
-        new TextRun({
-          text: 'LABORATORIO OFICIAL DE RADIOCOMUNICACIÓN — SERVICIO TÉCNICO',
-          bold: true,
-          size: 18,
-          color: 'E30613'
-        })
-      ],
-      spacing: { after: 300 }
-    }),
     new Paragraph({
       children: [
         new TextRun({
@@ -278,28 +282,41 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
         })
       );
     } else {
-      // Viñetas de fallas
+      // Viñetas consolidadas de fallas de placa
       if (eq.fallas && eq.fallas.length > 0) {
-        eq.fallas.forEach((f) => {
+        if (eq.fallas.length === 1) {
           paragraphs.push(
             new Paragraph({
               bullet: { level: 0 },
               children: [
                 new TextRun({
-                  text: `- El equipo presenta falla en ${f.label?.toLowerCase() || 'componentes de placa'}, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.`,
+                  text: `- El equipo presenta falla en ${eq.fallas[0].label?.toLowerCase() || 'componente de placa'}, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.`,
                   size: 20
                 })
               ]
             })
           );
-        });
+        } else {
+          const listaFallas = eq.fallas.map(f => f.label?.toLowerCase() || 'componente de placa').join(', ');
+          paragraphs.push(
+            new Paragraph({
+              bullet: { level: 0 },
+              children: [
+                new TextRun({
+                  text: `- El equipo presenta fallas en: ${listaFallas}, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.`,
+                  size: 20
+                })
+              ]
+            })
+          );
+        }
       } else {
         paragraphs.push(
           new Paragraph({
             bullet: { level: 0 },
             children: [
               new TextRun({
-                text: '- Se realizó la revisión electrónica integral, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.',
+                text: '- El equipo presenta desgaste por uso operativo, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.',
                 size: 20
               })
             ]
@@ -655,21 +672,79 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
     });
   }
 
+  // Configuración de encabezados y pies de página oficiales
+  const headersObj = headerImgBytes ? {
+    default: new Header({
+      children: [
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          children: [
+            new ImageRun({
+              data: headerImgBytes,
+              transformation: {
+                width: 535,
+                height: 65
+              }
+            })
+          ]
+        })
+      ]
+    })
+  } : undefined;
+
+  const footersObj = footerImgBytes ? {
+    default: new Footer({
+      children: [
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          children: [
+            new ImageRun({
+              data: footerImgBytes,
+              transformation: {
+                width: 535,
+                height: 65
+              }
+            })
+          ]
+        })
+      ]
+    })
+  } : undefined;
+
   const doc = new Document({
     creator: 'AMERICA SISTEMAS DE COMUNICACIÓN KEMLO SRL',
     title: `Informe Técnico OS-${numeroOrden}`,
+    styles: {
+      default: {
+        document: {
+          run: {
+            font: 'Calibri',
+            size: 21,
+            color: '1E293B'
+          }
+        }
+      }
+    },
     sections: [
       {
         properties: {
           page: {
+            size: {
+              width: 11906, // A4 Ancho en twips
+              height: 16838 // A4 Alto en twips
+            },
             margin: {
-              top: 1440,    // 1 inch
-              bottom: 1440,
-              left: 1440,
-              right: 1440
+              top: headerImgBytes ? 1300 : 1440,
+              bottom: footerImgBytes ? 1200 : 1440,
+              left: 1000,
+              right: 1000,
+              header: 450,
+              footer: 400
             }
           }
         },
+        headers: headersObj,
+        footers: footersObj,
         children: paragraphs
       }
     ]

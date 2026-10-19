@@ -326,7 +326,7 @@ function ServiceOrderWizardContent() {
             otros_descripcion: nombre.toLowerCase() === 'otros' ? eq.otrosDescripcion : null,
           }));
 
-          const safeImagenes = (eq.imagenes || []).map((img, imgIdx) => ({
+          const safeImagenes = (eq.imagenes || eq.imagenesRecepcion || []).map((img, imgIdx) => ({
             id: img.id || `img-${i}-${imgIdx}-${Date.now()}`,
             url: typeof img.url === 'string' ? img.url : '',
             name: img.name || `Evidencia ${imgIdx + 1}`,
@@ -334,7 +334,17 @@ function ServiceOrderWizardContent() {
             sizeKb: img.sizeKb || null
           }));
 
+          const safeImagenesInternas = (eq.imagenesInternas || eq.imagenesDiagnostico || []).map((img, imgIdx) => ({
+            id: img.id || `img-int-${i}-${imgIdx}-${Date.now()}`,
+            url: typeof img.url === 'string' ? img.url : '',
+            name: img.name || `Diagnóstico ${imgIdx + 1}`,
+            etapa: img.etapa || 'DIAGNOSTICO',
+            sizeKb: img.sizeKb || null
+          }));
+
           return {
+            id: eq.id || `eq-${Date.now()}-${i}`,
+            tempId: eq.tempId || eq.id || `eq-${Date.now()}-${i}`,
             orden_indice: i + 1,
             marca: eq.marca || 'Motorola',
             modelo: eq.modelo || 'DEP450',
@@ -344,12 +354,16 @@ function ServiceOrderWizardContent() {
             reparacion_rechazada: Boolean(eq.reparacion_rechazada),
             motivo_rechazo: eq.motivo_rechazo || null,
             texto_diagnostico: eq.texto_diagnostico || '',
+            notas_adicionales: eq.notas_adicionales || '',
             descripcion_servicio: eq.descripcion_servicio || 'Mantenimiento preventivo y calibración RF',
             costo_servicio: parseFloat(eq.costo_servicio) || 0,
             accesorios: accs,
             fallas: eq.fallas || [],
             repuestos: eq.repuestos || [],
-            imagenes: safeImagenes
+            imagenes: safeImagenes,
+            imagenesRecepcion: safeImagenes,
+            imagenesInternas: safeImagenesInternas,
+            imagenesDiagnostico: safeImagenesInternas
           };
         })
       };

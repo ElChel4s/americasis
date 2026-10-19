@@ -918,15 +918,17 @@ export const OrdersRepository = {
           .update(orderUpdates)
           .eq('id', resolvedOrderId);
 
-        // 4. Actualizar equipos y sus accesorios
+        // 4. Actualizar equipos y sus accesorios preservando identificadores y flota completa
         if (Array.isArray(receptionData.equipos) && receptionData.equipos.length > 0) {
           const { data: existingEquipos } = await supabase
             .from('orden_equipos')
-            .select('id, orden_indice')
-            .eq('orden_id', resolvedOrderId);
+            .select('*')
+            .eq('orden_id', resolvedOrderId)
+            .order('orden_indice', { ascending: true });
 
-          const existingMap = new Map((existingEquipos || []).map(e => [String(e.id), e]));
-          const incomingIds = new Set();
+          const existingById = new Map((existingEquipos || []).map(e => [String(e.id), e]));
+          const existingByIndex = new Map((existingEquipos || []).map(e => [e.orden_indice, e]));
+          const matchedDbIds = new Set();
 
           for (let i = 0; i < receptionData.equipos.length; i++) {
             const eq = receptionData.equipos[i];
@@ -934,9 +936,16 @@ export const OrdersRepository = {
             const eqIdStr = String(eq.id || '');
             let savedEqId = null;
 
-            if (existingMap.has(eqIdStr)) {
-              incomingIds.add(eqIdStr);
-              savedEqId = eqIdStr;
+            // Prioridad 1: Match por ID exacto de DB
+            // Prioridad 2: Match por índice de equipo en la orden (orden_indice: i + 1)
+            // Prioridad 3: Match por posición secuencial
+            const targetExisting = existingById.get(eqIdStr) 
+              || existingByIndex.get(i + 1) 
+              || (existingEquipos && existingEquipos[i]);
+
+            if (targetExisting) {
+              savedEqId = targetExisting.id;
+              matchedDbIds.add(String(savedEqId));
               await supabase
                 .from('orden_equipos')
                 .update({
@@ -959,17 +968,17 @@ export const OrdersRepository = {
                   modelo: eq.modelo || '',
                   numero_serie: serie,
                   banda: eq.banda || 'VHF',
-                  estado_individual: 'RECIBIDO',
+                  estado_individual: eq.estado_individual || 'RECIBIDO',
                   falla_declarada_cliente: eq.falla_declarada_cliente || '',
-                  costo_servicio: 0,
-                  reparacion_rechazada: false
+                  costo_servicio: parseFloat(eq.costo_servicio) || 0,
+                  reparacion_rechazada: Boolean(eq.reparacion_rechazada)
                 })
                 .select('id')
                 .single();
 
               if (!newEqErr && newEq) {
                 savedEqId = newEq.id;
-                incomingIds.add(String(newEq.id));
+                matchedDbIds.add(String(newEq.id));
               }
             }
 
@@ -1009,9 +1018,10 @@ export const OrdersRepository = {
             }
           }
 
-          for (const [existingId] of existingMap) {
-            if (!incomingIds.has(existingId)) {
-              await supabase.from('orden_equipos').delete().eq('id', existingId);
+          // Eliminar únicamente radios que ya no existen en la lista enviada
+          for (const existing of (existingEquipos || [])) {
+            if (!matchedDbIds.has(String(existing.id))) {
+              await supabase.from('orden_equipos').delete().eq('id', existing.id);
             }
           }
         }

@@ -353,13 +353,17 @@ export default function Step4ReportPreview({
                     </p>
                   ) : (
                     <div className="space-y-0.5 pl-3">
-                      {/* Viñetas de placa */}
+                      {/* Viñetas de placa consolidadas */}
                       {eq.fallas && eq.fallas.length > 0 ? (
-                        eq.fallas.map((f, fi) => (
-                          <p key={fi} className="text-gray-800">
-                            - El equipo presenta falla en <strong className="font-bold">{f.label?.toLowerCase() || 'componente de placa'}</strong>, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.
+                        eq.fallas.length === 1 ? (
+                          <p className="text-gray-800">
+                            - El equipo presenta falla en <strong className="font-bold">{eq.fallas[0].label?.toLowerCase() || 'componente de placa'}</strong>, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.
                           </p>
-                        ))
+                        ) : (
+                          <p className="text-gray-800">
+                            - El equipo presenta fallas en: <strong className="font-bold">{eq.fallas.map(f => f.label?.toLowerCase() || 'componente de placa').join(', ')}</strong>, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.
+                          </p>
+                        )
                       ) : (
                         <p className="text-gray-800">
                           - El equipo presenta desgaste por uso operativo, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.

@@ -6,8 +6,20 @@ export const AuthService = {
   /**
    * Autenticación de credenciales de usuario
    */
-  async login({ email, password }) {
-    const user = await AuthRepository.findByEmail(email);
+  async login({ email, password, localUsers = [] }) {
+    let user = await AuthRepository.findByEmail(email);
+    if (!user && Array.isArray(localUsers) && localUsers.length > 0) {
+      const clean = email.trim().toLowerCase();
+      const localMatch = localUsers.find(u => 
+        (u.email && u.email.toLowerCase() === clean) ||
+        (u.email && u.email.toLowerCase().startsWith(clean + '@')) ||
+        (u.nombre_completo && u.nombre_completo.toLowerCase() === clean)
+      );
+      if (localMatch) {
+        user = await AuthRepository.registerLocalUser(localMatch);
+      }
+    }
+
     if (!user) {
       throw new Error('Credenciales incorrectas');
     }

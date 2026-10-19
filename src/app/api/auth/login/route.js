@@ -19,7 +19,11 @@ export async function POST(request) {
     }
 
     const { email, password } = validation.data;
-    const { token, user } = await AuthService.login({ email, password });
+    const { token, user } = await AuthService.login({
+      email,
+      password,
+      localUsers: Array.isArray(body?.localUsers) ? body.localUsers : []
+    });
 
     const response = successResponse({ user }, 'Inicio de sesión exitoso');
 

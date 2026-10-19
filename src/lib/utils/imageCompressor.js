@@ -10,7 +10,7 @@
  *   se reduce iterativamente la calidad y resolución en el Canvas hasta cumplir la cuota.
  */
 
-const MAX_SAFE_BYTES = 150 * 1024; // 150 KB
+const MAX_SAFE_BYTES = 60 * 1024; // 60 KB por foto para optimizar cuota de localStorage
 
 /**
  * Calcula el tamaño en bytes de una cadena Base64 Data URL
@@ -23,13 +23,13 @@ export const getDataUrlSizeBytes = (dataUrl) => {
 };
 
 /**
- * Comprime y redimensiona una imagen garantizando que no supere la cuota de peso (150 KB)
+ * Comprime y redimensiona una imagen garantizando que no supere la cuota de peso (60 KB)
  */
 export const compressImage = async (fileOrSource, options = {}) => {
   const {
-    maxWidth = 1000,
-    maxHeight = 1000,
-    quality = 0.7,
+    maxWidth = 800,
+    maxHeight = 800,
+    quality = 0.65,
     maxSizeBytes = MAX_SAFE_BYTES,
     returnType = 'base64', // 'base64' | 'blob' | 'file'
   } = options;

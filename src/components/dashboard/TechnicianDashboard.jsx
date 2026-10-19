@@ -12,7 +12,15 @@ import { OrdersService } from '@/lib/services/orders.service';
 export default function TechnicianDashboard() {
   const router = useRouter();
   const [orders, setOrders] = useState([]);
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('america_user');
+        if (cached) return JSON.parse(cached);
+      } catch (e) {}
+    }
+    return null;
+  });
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState('ALL'); // 'ALL' | 'MINE' | 'PENDING' | 'DONE'
