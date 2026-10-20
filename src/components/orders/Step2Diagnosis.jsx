@@ -451,6 +451,7 @@ export default function Step2Diagnosis({
     fallas: fallasSeleccionadas,
     repuestos: repuestos,
     imagenesInternas: imagenesInternas,
+    imagenesDiagnostico: imagenesInternas,
     subtotales: {
       subtotal1_servicio,
       subtotal2_accesorios,
@@ -959,19 +960,26 @@ export default function Step2Diagnosis({
             No hay fotos internas. Suba fotos del estado de la placa, sulfato o componentes dañados.
           </p>
         ) : (
-          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 pt-1">
+          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5 pt-1">
             {imagenesInternas.map((img, idx) => (
-              <div key={idx} className="relative group aspect-square rounded-xl overflow-hidden border border-slate-200 shadow-xs bg-slate-100">
+              <div key={idx} className="relative group aspect-square rounded-2xl overflow-hidden border-2 border-slate-200/90 shadow-sm bg-slate-100 hover:border-[#E30613]/50 transition-all">
                 <img src={img.url} alt={`Evidencia Interna ${idx + 1}`} className="w-full h-full object-cover" />
+                <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 bg-black/65 text-white text-[10px] font-black rounded-md backdrop-blur-xs">
+                  #{idx + 1}
+                </span>
                 <button
                   type="button"
                   onClick={() => {
+                    if (typeof window !== 'undefined' && !window.confirm('¿Desea eliminar esta fotografía de diagnóstico interno?')) {
+                      return;
+                    }
                     const filtered = imagenesInternas.filter((_, i) => i !== idx);
                     setImagenesInternas(filtered);
                   }}
-                  className="absolute top-1.5 right-1.5 bg-black/60 hover:bg-red-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-all shadow-md"
+                  className="absolute top-1.5 right-1.5 w-7 h-7 bg-red-600 hover:bg-red-700 active:scale-90 text-white rounded-full shadow-lg transition-all cursor-pointer z-10 flex items-center justify-center ring-2 ring-white/80"
+                  title="Eliminar foto de diagnóstico"
                 >
-                  <X size={12} />
+                  <Trash2 size={13} />
                 </button>
               </div>
             ))}

@@ -18,6 +18,8 @@
 const STORAGE_KEY = 'americasis_orders';
 const LEGACY_STORAGE_KEY = 'america_orders_db';
 
+import { UsersService, normalizeEmail } from './users.service';
+
 // Almacén en memoria RAM para imágenes de alta resolución en la sesión activa
 const inMemoryOrderImages = new Map();
 
@@ -690,42 +692,28 @@ export const OrdersService = {
   getTechnicians: async () => {
     let list = [];
     try {
+      UsersService.initStorage();
+      list = UsersService.getTecnicos();
+    } catch (e) {}
+
+    try {
       const res = await fetch('/api/users');
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
-          list = json.data.filter(u => u.rol === 'TECNICO' && u.activo !== false);
+          const serverTechs = json.data.filter(u => u.rol === 'TECNICO' && u.activo !== false);
+          const map = new Map();
+          list.forEach(t => map.set(normalizeEmail(t.email) || String(t.id), t));
+          serverTechs.forEach(t => {
+            const key = normalizeEmail(t.email) || String(t.id);
+            if (!map.has(key)) {
+              map.set(key, t);
+            }
+          });
+          list = Array.from(map.values());
         }
       }
     } catch (e) {}
-
-    // Fallback con personal base
-    if (list.length === 0) {
-      list = [
-        { id: 'b0000000-0000-0000-0000-000000000002', nombre_completo: 'Roberto Gómez (Técnico RF)', email: 'tecnico' },
-        { id: 'b0000000-0000-0000-0000-000000000004', nombre_completo: 'Carlos Mamani (Laboratorio RF)', email: 'cmamani' }
-      ];
-    }
-
-    // Integrar inmediatamente personal persistido en 'americasis_users'
-    if (typeof window !== 'undefined') {
-      try {
-        const local = localStorage.getItem('americasis_users');
-        if (local) {
-          const parsed = JSON.parse(local);
-          if (Array.isArray(parsed)) {
-            parsed.forEach(u => {
-              if (u.rol === 'TECNICO' && u.activo !== false) {
-                const exists = list.some(t => String(t.id) === String(u.id) || (t.email && u.email && t.email.toLowerCase() === u.email.toLowerCase()));
-                if (!exists) {
-                  list.push(u);
-                }
-              }
-            });
-          }
-        }
-      } catch (err) {}
-    }
 
     return list;
   },

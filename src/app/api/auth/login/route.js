@@ -19,8 +19,9 @@ export async function POST(request) {
     }
 
     const { email, password } = validation.data;
+    const cleanEmail = (email || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const { token, user } = await AuthService.login({
-      email,
+      email: cleanEmail,
       password,
       localUsers: Array.isArray(body?.localUsers) ? body.localUsers : []
     });

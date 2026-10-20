@@ -7,14 +7,26 @@ export const AuthService = {
    * Autenticación de credenciales de usuario
    */
   async login({ email, password, localUsers = [] }) {
-    let user = await AuthRepository.findByEmail(email);
+    const clean = (email || '').trim().toLowerCase();
+    const cleanNorm = clean.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const cleanUser = cleanNorm.split('@')[0];
+
+    let user = await AuthRepository.findByEmail(clean);
     if (!user && Array.isArray(localUsers) && localUsers.length > 0) {
-      const clean = email.trim().toLowerCase();
-      const localMatch = localUsers.find(u => 
-        (u.email && u.email.toLowerCase() === clean) ||
-        (u.email && u.email.toLowerCase().startsWith(clean + '@')) ||
-        (u.nombre_completo && u.nombre_completo.toLowerCase() === clean)
-      );
+      const localMatch = localUsers.find(u => {
+        const uEmail = (u.email || '').trim().toLowerCase();
+        const uNorm = uEmail.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        const uUser = uNorm.split('@')[0];
+        const uName = (u.nombre_completo || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+        return (
+          uEmail === clean ||
+          uNorm === cleanNorm ||
+          uUser === cleanUser ||
+          cleanNorm.startsWith(uUser + '@') ||
+          uName === cleanNorm
+        );
+      });
       if (localMatch) {
         user = await AuthRepository.registerLocalUser(localMatch);
       }

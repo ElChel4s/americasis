@@ -64,8 +64,13 @@ export default function TechnicianDashboard() {
     if (!currentUser) return false;
     if (order.usuario_tecnico_id && String(order.usuario_tecnico_id) === String(currentUser.id)) return true;
     if (order.tecnico_asignado_id && String(order.tecnico_asignado_id) === String(currentUser.id)) return true;
+    if (order.tecnicoAsignadoId && String(order.tecnicoAsignadoId) === String(currentUser.id)) return true;
     if (order.tecnico_nombre_manual && currentUser.nombre_completo &&
-        order.tecnico_nombre_manual.toLowerCase().includes(currentUser.nombre_completo.toLowerCase())) return true;
+        (order.tecnico_nombre_manual.toLowerCase().includes(currentUser.nombre_completo.toLowerCase()) ||
+         currentUser.nombre_completo.toLowerCase().includes(order.tecnico_nombre_manual.toLowerCase()))) return true;
+    if (order.tecnicoNombre && currentUser.nombre_completo &&
+        (order.tecnicoNombre.toLowerCase().includes(currentUser.nombre_completo.toLowerCase()) ||
+         currentUser.nombre_completo.toLowerCase().includes(order.tecnicoNombre.toLowerCase()))) return true;
     return false;
   };
 

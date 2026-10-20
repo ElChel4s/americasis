@@ -48,7 +48,12 @@ export async function POST(request) {
   }
 
   try {
-    const body = await request.json();
+    const rawBody = await request.json();
+    const cleanEmail = (rawBody.email || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const body = {
+      ...rawBody,
+      email: cleanEmail
+    };
     const validation = createUserSchema.safeParse(body);
 
     if (!validation.success) {

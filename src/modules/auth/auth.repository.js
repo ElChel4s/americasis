@@ -31,6 +31,18 @@ let mockUsers = [
     creado_en: '2026-02-01T10:00:00Z',
   },
   {
+    id: 'usr-ramiro-condori',
+    sucursal_id: 'a0000000-0000-0000-0000-000000000001',
+    nombre_completo: 'Ramiro Condori',
+    email: 'tecnico1@americasis.com',
+    password_hash: DEFAULT_PASSWORD_HASH,
+    rol: 'TECNICO',
+    activo: true,
+    token_version: 1,
+    ultimo_login: new Date().toISOString(),
+    creado_en: '2026-02-15T08:00:00Z',
+  },
+  {
     id: 'b0000000-0000-0000-0000-000000000003',
     sucursal_id: 'a0000000-0000-0000-0000-000000000001',
     nombre_completo: 'Ana Morales (Recepción)',
@@ -49,15 +61,18 @@ export const AuthRepository = {
    * Busca un usuario por email (case-insensitive)
    */
   async findByEmail(email) {
-    const cleanEmail = email ? email.trim().toLowerCase() : '';
+    if (!email) return null;
+    const cleanEmail = email.trim().toLowerCase();
+    const normalized = cleanEmail.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const usernameOnly = cleanEmail.split('@')[0];
+    const usernameNorm = normalized.split('@')[0];
 
     if (supabase) {
       try {
         const { data, error } = await supabase
           .from('usuarios')
           .select('id, sucursal_id, nombre_completo, email, password_hash, rol, activo, token_version, ultimo_login, creado_en')
-          .or(`email.ilike.${cleanEmail},email.ilike.${usernameOnly}`)
+          .or(`email.ilike.${cleanEmail},email.ilike.${normalized},email.ilike.${usernameOnly},email.ilike.${usernameNorm}`)
           .limit(1)
           .maybeSingle();
 
@@ -69,18 +84,29 @@ export const AuthRepository = {
       const { rows } = await pool.query(
         `SELECT id, sucursal_id, nombre_completo, email, password_hash, rol, activo, token_version, ultimo_login, creado_en 
          FROM usuarios 
-         WHERE LOWER(TRIM(email)) = $1 OR LOWER(TRIM(email)) = $2
+         WHERE LOWER(TRIM(email)) = $1 OR LOWER(TRIM(email)) = $2 OR LOWER(TRIM(email)) = $3
          LIMIT 1`,
-        [cleanEmail, usernameOnly]
+        [cleanEmail, normalized, usernameNorm]
       );
       if (rows && rows.length > 0) return rows[0];
     } catch (err) {}
 
-    const found = mockUsers.find(u => 
-      u.email.toLowerCase() === cleanEmail || 
-      u.email.toLowerCase() === usernameOnly ||
-      cleanEmail.startsWith(u.email.toLowerCase() + '@')
-    );
+    const found = mockUsers.find(u => {
+      const uEmail = (u.email || '').toLowerCase().trim();
+      const uNorm = uEmail.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const uUser = uNorm.split('@')[0];
+      const uName = (u.nombre_completo || '').toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+      return (
+        uEmail === cleanEmail ||
+        uNorm === normalized ||
+        uUser === usernameNorm ||
+        usernameNorm === uUser ||
+        cleanEmail.startsWith(uUser + '@') ||
+        normalized.startsWith(uUser + '@') ||
+        uName === normalized
+      );
+    });
     return found ? { ...found } : null;
   },
 
@@ -90,10 +116,12 @@ export const AuthRepository = {
   async registerLocalUser(localUser) {
     if (!localUser || !localUser.email) return null;
     const cleanEmail = localUser.email.toLowerCase().trim();
-    const existing = mockUsers.find(u => 
-      String(u.id) === String(localUser.id) || 
-      u.email.toLowerCase() === cleanEmail
-    );
+    const normalized = cleanEmail.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const existing = mockUsers.find(u => {
+      const uEmail = (u.email || '').toLowerCase().trim();
+      const uNorm = uEmail.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      return String(u.id) === String(localUser.id) || uEmail === cleanEmail || uNorm === normalized;
+    });
     if (existing) {
       existing.activo = localUser.activo !== false;
       existing.rol = localUser.rol || existing.rol;
@@ -105,7 +133,7 @@ export const AuthRepository = {
       id: localUser.id || `b0000000-0000-0000-0000-${String(Date.now()).padStart(12, '0').slice(-12)}`,
       sucursal_id: localUser.sucursal_id || 'a0000000-0000-0000-0000-000000000001',
       nombre_completo: localUser.nombre_completo || 'Colaborador Local',
-      email: cleanEmail,
+      email: normalized,
       password_hash: localUser.password_hash || DEFAULT_PASSWORD_HASH,
       rol: localUser.rol || 'TECNICO',
       activo: localUser.activo !== false,

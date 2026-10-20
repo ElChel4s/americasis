@@ -6,10 +6,13 @@ import {
   Radio, Mail, Lock, Eye, EyeOff, ArrowRight, ShieldCheck, AlertCircle, Loader2, Sparkles, CheckCircle2
 } from 'lucide-react';
 
+import { UsersService, normalizeEmail } from '@/lib/services/users.service';
+
 const QUICK_TEST_USERS = [
   { role: 'Admin', email: 'admin', label: 'Administrador' },
   { role: 'Recepción', email: 'recepcion', label: 'Recepción' },
-  { role: 'Técnico', email: 'tecnico', label: 'Soporte Técnico' },
+  { role: 'Técnico', email: 'tecnico1@americasis.com', label: 'Ramiro Condori (Técnico)' },
+  { role: 'Técnico', email: 'tecnico', label: 'Roberto Gómez (Técnico)' },
 ];
 
 function LoginForm() {
@@ -36,23 +39,17 @@ function LoginForm() {
   React.useEffect(() => {
     const loadQuickUsers = () => {
       try {
-        const local = localStorage.getItem('americasis_users');
-        if (local) {
-          const parsed = JSON.parse(local);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            const extra = parsed
-              .filter(u => u.activo !== false)
-              .map(u => ({
-                role: u.rol === 'ADMINISTRADOR' ? 'Admin' : u.rol === 'RECEPCION' ? 'Recepción' : 'Técnico',
-                email: u.email,
-                label: u.nombre_completo || u.email
-              }));
-
-            const map = new Map();
-            QUICK_TEST_USERS.forEach(u => map.set(u.email.toLowerCase(), u));
-            extra.forEach(u => map.set(u.email.toLowerCase(), u));
-            setQuickUsers(Array.from(map.values()));
-          }
+        UsersService.initStorage();
+        const all = UsersService.getAllUsers();
+        if (Array.isArray(all) && all.length > 0) {
+          const list = all
+            .filter(u => u.activo !== false)
+            .map(u => ({
+              role: u.rol === 'ADMINISTRADOR' ? 'Admin' : u.rol === 'RECEPCION' ? 'Recepción' : 'Técnico',
+              email: u.email || u.username,
+              label: u.nombre_completo || u.email
+            }));
+          setQuickUsers(list);
         }
       } catch (err) {}
     };
@@ -80,14 +77,15 @@ function LoginForm() {
     try {
       let localUsersPayload = [];
       try {
-        localUsersPayload = JSON.parse(localStorage.getItem('americasis_users') || '[]');
+        localUsersPayload = UsersService.getAllUsers();
       } catch (e) {}
 
+      const cleanEmail = normalizeEmail(email) || email.trim().toLowerCase();
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: email.trim(),
+          email: cleanEmail,
           password,
           localUsers: localUsersPayload
         }),

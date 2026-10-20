@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Printer, FileDown, Loader2, Info, ArrowLeft,
-  CheckCircle2, Camera, ShieldAlert, Sparkles, Building, Lock
+  CheckCircle2, Camera, ShieldAlert, Sparkles, Building, Lock,
+  Sliders, Trash2, Edit3, ChevronDown, ChevronUp, UserCheck
 } from 'lucide-react';
 import {
   formatCurrency,
@@ -14,6 +15,7 @@ import {
   normalizeCurrency
 } from '@/lib/utils/currencyFormat';
 import { generateDocxBlob } from '@/lib/utils/docxExport';
+import { UsersService } from '@/lib/services/users.service';
 
 function formatFechaBolivia(date = new Date()) {
   const MESES = [
@@ -62,10 +64,91 @@ export default function Step4ReportPreview({
   const [revisionEditable, setRevisionEditable] = useState(
     formData.condiciones?.referenciaAdicional || ''
   );
+  const [showConfigPanel, setShowConfigPanel] = useState(true);
 
   const isTecnico = (userRole || currentUser?.rol) === 'TECNICO';
   const moneda = normalizeCurrency(formData.moneda || 'BOB');
-  const condiciones = formData.condiciones || {};
+
+  const [localCondiciones, setLocalCondiciones] = useState(() => ({
+    incluirConclusiones: false,
+    conclusiones: [
+      'Los equipos operan en ambientes industriales con exposición a polvo y vibraciones mecánicas.',
+      'Se recomienda programar limpiezas y calibración preventiva periódica cada 6 meses.'
+    ],
+    conclusionesTexto: 'Los equipos operan en ambientes industriales con exposición a polvo y vibraciones mecánicas.\nSe recomienda programar limpiezas y calibración preventiva periódica cada 6 meses.',
+    incluirNotas: false,
+    notasObservaciones: '',
+    incluirPoliticasGenerales: true,
+    incluirGarantiaBaterias: true,
+    diasVigencia: 5,
+    tiempoEntrega: '1 a 2 semanas',
+    costoRevision: DEFAULT_REVISION_COST[moneda],
+    tipoGarantia: 'ESTANDAR_5_DIAS',
+    textoGarantia: '5 días calendario a partir de la entrega para verificación operativa.',
+    referenciaAdicional: '',
+    tecnicoFirmanteNombre: '',
+    tecnicoFirmanteCargo: '',
+    ...(formData.condiciones || {})
+  }));
+
+  const condiciones = useMemo(() => ({
+    ...localCondiciones,
+    ...(formData.condiciones || {})
+  }), [localCondiciones, formData.condiciones]);
+
+  const handleUpdateCondicion = (updates) => {
+    setLocalCondiciones(prev => ({ ...prev, ...updates }));
+    if (updateForm) {
+      updateForm({
+        condiciones: {
+          ...condiciones,
+          ...updates
+        }
+      });
+    }
+  };
+
+  const [tecnicosList, setTecnicosList] = useState([]);
+
+  useEffect(() => {
+    UsersService.initStorage();
+    setTecnicosList(UsersService.getTecnicos());
+    const handleUsers = () => setTecnicosList(UsersService.getTecnicos());
+    window.addEventListener('americasis_users_updated', handleUsers);
+    return () => window.removeEventListener('americasis_users_updated', handleUsers);
+  }, []);
+
+  const tecnicoAsignado = useMemo(() => {
+    const techId = formData.usuario_tecnico_id || formData.tecnicoAsignadoId;
+    if (techId) {
+      const match = tecnicosList.find(t => String(t.id) === String(techId));
+      if (match) return match;
+    }
+    const techName = formData.tecnicoNombre || formData.tecnico_nombre_manual;
+    if (techName) {
+      const match = tecnicosList.find(t => t.nombre_completo.toLowerCase() === techName.toLowerCase());
+      if (match) return match;
+      return { nombre_completo: techName, cargo: 'Técnico Especialista RF' };
+    }
+    if (currentUser?.rol === 'TECNICO') {
+      return currentUser;
+    }
+    const ramiro = tecnicosList.find(t => t.nombre_completo.includes('Ramiro'));
+    return ramiro || { nombre_completo: 'Ramiro Condori', cargo: 'Técnico Especialista RF' };
+  }, [formData.usuario_tecnico_id, formData.tecnicoAsignadoId, formData.tecnicoNombre, formData.tecnico_nombre_manual, currentUser, tecnicosList]);
+
+  const tecnicoFirmanteNombre = condiciones.tecnicoFirmanteNombre || tecnicoAsignado?.nombre_completo || 'Ramiro Condori';
+  const tecnicoFirmanteCargo = condiciones.tecnicoFirmanteCargo || tecnicoAsignado?.cargo || 'Técnico Especialista RF';
+
+  const conclusionesList = useMemo(() => {
+    if (condiciones.conclusionesTexto && typeof condiciones.conclusionesTexto === 'string') {
+      return condiciones.conclusionesTexto.split('\n').map(s => s.trim()).filter(Boolean);
+    }
+    if (Array.isArray(condiciones.conclusiones)) {
+      return condiciones.conclusiones.filter(Boolean);
+    }
+    return [];
+  }, [condiciones.conclusionesTexto, condiciones.conclusiones]);
 
   const currentDate = useMemo(() => {
     return formatFechaBolivia();
@@ -189,7 +272,13 @@ export default function Step4ReportPreview({
       const docxPayload = {
         ...formData,
         cliente: clienteNombreStr,
-        ordenServicio: ordenNumeroStr
+        ordenServicio: ordenNumeroStr,
+        condiciones: {
+          ...condiciones,
+          conclusiones: conclusionesList,
+          tecnicoFirmanteNombre,
+          tecnicoFirmanteCargo
+        }
       };
       const blob = await generateDocxBlob(docxPayload, currentUser);
       const url = window.URL.createObjectURL(blob);
@@ -216,9 +305,8 @@ export default function Step4ReportPreview({
         <div>
           <h2 className="text-xl sm:text-2xl font-black text-gray-900 tracking-tight flex items-center gap-2">
             <span>Fase 4: Vista Previa y Emisión Oficial</span>
-            <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold uppercase ${
-              moneda === 'USD' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
-            }`}>
+            <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold uppercase ${moneda === 'USD' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+              }`}>
               Formato {moneda === 'USD' ? 'Dólares (Usd.)' : 'Bolivianos (Bs.)'}
             </span>
           </h2>
@@ -270,19 +358,167 @@ export default function Step4ReportPreview({
         </p>
       </div>
 
+      {/* Panel de Personalización y Ocultamiento de Notas / Secciones */}
+      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-4 sm:p-5 print:hidden space-y-4">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <Sliders size={18} className="text-[#E30613]" />
+            <h3 className="text-sm font-black text-gray-900 uppercase tracking-tight">
+              Personalizar y Ocultar Notas / Secciones del Informe
+            </h3>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowConfigPanel(!showConfigPanel)}
+            className="text-xs font-bold text-gray-500 hover:text-gray-800 flex items-center gap-1 cursor-pointer"
+          >
+            {showConfigPanel ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            <span>{showConfigPanel ? 'Ocultar ajustes' : 'Mostrar ajustes'}</span>
+          </button>
+        </div>
+
+        {showConfigPanel && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+            {/* 1. Conclusiones */}
+            <div className="p-3.5 bg-slate-50/80 rounded-xl border border-slate-200 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="font-bold text-gray-800 flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(condiciones.incluirConclusiones)}
+                    onChange={(e) => handleUpdateCondicion({ incluirConclusiones: e.target.checked })}
+                    className="rounded text-red-600 cursor-pointer"
+                  />
+                  <span>Conclusiones / Recom.</span>
+                </label>
+                {condiciones.incluirConclusiones && (
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateCondicion({ conclusionesTexto: '', conclusiones: [] })}
+                    className="text-[10px] text-red-600 hover:text-red-700 font-bold flex items-center gap-0.5 cursor-pointer"
+                    title="Borrar texto de conclusiones"
+                  >
+                    <Trash2 size={11} /> Limpiar
+                  </button>
+                )}
+              </div>
+              {condiciones.incluirConclusiones && (
+                <textarea
+                  rows={3}
+                  value={condiciones.conclusionesTexto || (Array.isArray(condiciones.conclusiones) ? condiciones.conclusiones.join('\n') : '')}
+                  onChange={(e) => handleUpdateCondicion({
+                    conclusionesTexto: e.target.value,
+                    conclusiones: e.target.value.split('\n').filter(Boolean)
+                  })}
+                  placeholder="Escriba las conclusiones o recomendaciones..."
+                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-medium text-gray-800 focus:outline-none focus:border-[#E30613]"
+                />
+              )}
+              <p className="text-[10px] text-gray-400">
+                {condiciones.incluirConclusiones ? 'Se mostrará antes del cuadro de costos.' : 'Sección oculta en A4 y Word.'}
+              </p>
+            </div>
+
+            {/* 2. Observaciones / Notas Específicas */}
+            <div className="p-3.5 bg-slate-50/80 rounded-xl border border-slate-200 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="font-bold text-gray-800 flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(condiciones.incluirNotas)}
+                    onChange={(e) => handleUpdateCondicion({ incluirNotas: e.target.checked })}
+                    className="rounded text-red-600 cursor-pointer"
+                  />
+                  <span>Observaciones / Notas</span>
+                </label>
+                {condiciones.incluirNotas && (
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateCondicion({ notasObservaciones: '' })}
+                    className="text-[10px] text-red-600 hover:text-red-700 font-bold flex items-center gap-0.5 cursor-pointer"
+                    title="Borrar notas"
+                  >
+                    <Trash2 size={11} /> Limpiar
+                  </button>
+                )}
+              </div>
+              {condiciones.incluirNotas && (
+                <textarea
+                  rows={3}
+                  value={condiciones.notasObservaciones || ''}
+                  onChange={(e) => handleUpdateCondicion({ notasObservaciones: e.target.value })}
+                  placeholder="Ej. Requerimiento especial para CAINSA..."
+                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-medium text-gray-800 focus:outline-none focus:border-[#E30613]"
+                />
+              )}
+              <p className="text-[10px] text-gray-400">
+                {condiciones.incluirNotas ? 'Se agregará como sección destacada.' : 'Sin notas forzadas.'}
+              </p>
+            </div>
+
+            {/* 3. Políticas Generales de Empresa */}
+            <div className="p-3.5 bg-slate-50/80 rounded-xl border border-slate-200 space-y-2">
+              <label className="font-bold text-gray-800 flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={condiciones.incluirPoliticasGenerales !== false}
+                  onChange={(e) => handleUpdateCondicion({ incluirPoliticasGenerales: e.target.checked })}
+                  className="rounded text-red-600 cursor-pointer"
+                />
+                <span>Políticas de Empresa</span>
+              </label>
+              <p className="text-[11px] text-gray-500 leading-snug">
+                {condiciones.incluirPoliticasGenerales !== false
+                  ? 'Incluye cláusula legal de estimación y prueba operativa.'
+                  : 'Documento limpio sin cláusulas legales fijas (ideal CAINSA).'}
+              </p>
+            </div>
+
+            {/* 4. Selector de Técnico Firmante */}
+            <div className="p-3.5 bg-slate-50/80 rounded-xl border border-slate-200 space-y-2">
+              <label className="font-bold text-gray-800 flex items-center gap-1.5">
+                <UserCheck size={14} className="text-[#E30613]" />
+                <span>Técnico Firmante</span>
+              </label>
+              <select
+                value={condiciones.tecnicoFirmanteNombre || tecnicoAsignado?.nombre_completo || ''}
+                onChange={(e) => {
+                  const selName = e.target.value;
+                  const match = tecnicosList.find(t => t.nombre_completo === selName);
+                  handleUpdateCondicion({
+                    tecnicoFirmanteNombre: selName,
+                    tecnicoFirmanteCargo: match?.cargo || 'Técnico Especialista RF'
+                  });
+                }}
+                className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-gray-800 focus:outline-none focus:border-[#E30613] cursor-pointer"
+              >
+                {tecnicosList.map(t => (
+                  <option key={t.id} value={t.nombre_completo}>
+                    👤 {t.nombre_completo} ({t.cargo || 'Técnico RF'})
+                  </option>
+                ))}
+              </select>
+              <p className="text-[10px] text-gray-400">
+                Firma derecha: <strong className="text-gray-700">{tecnicoFirmanteNombre}</strong>
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* CONTENEDOR DE HOJAS A4 */}
       <div className="bg-slate-300/60 p-2 sm:p-8 rounded-3xl overflow-x-auto print:bg-transparent print:p-0 print:overflow-visible flex flex-col items-center">
-        
+
         {/* ============================================================== */}
         {/* PÁGINA 1: INFORME TÉCNICO Y ECONÓMICO */}
         {/* ============================================================== */}
         <div className="a4-paper bg-white shadow-2xl print:shadow-none print:m-0 mb-8 print:mb-0 relative font-sans text-gray-900 leading-snug">
-          
+
           {/* Membrete Superior Oficial */}
           <HeaderMembrete />
 
           <div className="px-2 sm:px-6 space-y-4 text-[12.5px] sm:text-[13px] text-gray-900">
-            
+
             {/* A. Encabezado Oficial */}
             <div className="flex flex-col sm:flex-row justify-between items-start text-xs font-medium">
               <div>
@@ -353,17 +589,13 @@ export default function Step4ReportPreview({
                     </p>
                   ) : (
                     <div className="space-y-0.5 pl-3">
-                      {/* Viñetas de placa consolidadas */}
+                      {/* Viñetas de placa */}
                       {eq.fallas && eq.fallas.length > 0 ? (
-                        eq.fallas.length === 1 ? (
-                          <p className="text-gray-800">
-                            - El equipo presenta falla en <strong className="font-bold">{eq.fallas[0].label?.toLowerCase() || 'componente de placa'}</strong>, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.
+                        eq.fallas.map((f, fi) => (
+                          <p key={fi} className="text-gray-800">
+                            - El equipo presenta falla en <strong className="font-bold">{f.label?.toLowerCase() || 'componente de placa'}</strong>, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.
                           </p>
-                        ) : (
-                          <p className="text-gray-800">
-                            - El equipo presenta fallas en: <strong className="font-bold">{eq.fallas.map(f => f.label?.toLowerCase() || 'componente de placa').join(', ')}</strong>, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.
-                          </p>
-                        )
+                        ))
                       ) : (
                         <p className="text-gray-800">
                           - El equipo presenta desgaste por uso operativo, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.
@@ -390,8 +622,8 @@ export default function Step4ReportPreview({
             </div>
 
             {/* D. Sección 3: Conclusiones / Recomendaciones (Condicional) */}
-            {condiciones.incluirConclusiones && (
-              <div className="space-y-1 pt-1">
+            {condiciones.incluirConclusiones && conclusionesList.length > 0 && (
+              <div className="space-y-1 pt-1 break-inside-avoid">
                 <h3 className="font-black underline underline-offset-2 text-xs sm:text-sm text-gray-900 uppercase">
                   CONCLUSIONES / RECOMENDACIONES:
                 </h3>
@@ -399,12 +631,24 @@ export default function Step4ReportPreview({
                   De acuerdo a la revisión realizada se observa:
                 </p>
                 <ul className="list-disc list-inside space-y-0.5 text-xs text-gray-800 pl-2">
-                  {(condiciones.conclusiones || []).map((c, ci) => (
+                  {conclusionesList.map((c, ci) => (
                     <li key={ci}>{c}</li>
                   ))}
                 </ul>
                 <p className="text-xs italic text-gray-600 pt-0.5">
                   Confirmarnos si se procede con el servicio técnico indicado.
+                </p>
+              </div>
+            )}
+
+            {/* D.2 Observaciones / Notas Adicionales (Condicional) */}
+            {condiciones.incluirNotas && condiciones.notasObservaciones?.trim() && (
+              <div className="space-y-1 pt-1.5 border-t border-gray-200 break-inside-avoid">
+                <h3 className="font-black underline underline-offset-2 text-xs sm:text-sm text-gray-900 uppercase">
+                  OBSERVACIONES / NOTAS:
+                </h3>
+                <p className="text-xs text-gray-800 whitespace-pre-line pl-2 leading-relaxed">
+                  {condiciones.notasObservaciones.trim()}
                 </p>
               </div>
             )}
@@ -502,21 +746,29 @@ export default function Step4ReportPreview({
               <p>• <strong>Accesorios y repuestos:</strong> Disponibles en Stock, salvo ventas sin previo aviso.</p>
               <p>• <strong>Entrega de equipos reparados:</strong> {condiciones.tiempoEntrega || '1 a 2 semanas'}, posterior al día de la autorización por escrito del presente informe.</p>
               <p>• <strong>Garantía de la reparación:</strong> {condiciones.textoGarantia || '5 días calendario a partir de la entrega para verificación operativa.'}</p>
-              
+
               {condiciones.incluirGarantiaBaterias && (
                 <p>• <strong>Tiempo de prueba de baterías:</strong> Las baterías nuevas cuentan con 3 meses de garantía por defectos de fábrica.</p>
               )}
 
               <p>• <strong>Cuenta de cheque:</strong> Para pagos con cheque, este debe ser girado a nombre de: <strong>AMERICA SISTEMAS DE COMUNICACIÓN KEMLO SRL</strong></p>
-              <p>• <strong>Penalidad por no autorización:</strong> {getRevisionCostText(condiciones.costoRevision, moneda)}</p>
+              {condiciones.incluirPoliticasGenerales !== false ? (
+                <>
+                  <p>• <strong>Penalidad por no autorización:</strong> {getRevisionCostText(condiciones.costoRevision, moneda)}</p>
 
-              <div className="pt-2 text-[10px] text-gray-600 space-y-1">
-                <p className="font-bold text-gray-700 uppercase">Condiciones y Políticas Generales de la Empresa:</p>
-                <p className="text-justify">
-                  SERVICIOS - Toda cotización de servicios, como ser instalaciones, servicio técnico, revisiones, reparaciones, mantenimientos, etc., son solo una estimación del precio por servicio y no el precio final, el cual variará de acuerdo a la particularidad de cada servicio. Se debe tomar en cuenta que en cada servicio se debe realizar las pruebas operativas de los equipos y posteriormente se pueden requerir más cambios de repuestos u accesorios, que serán cobrados de forma adicional.
-                </p>
-                <p className="italic pt-0.5">Sin otro particular, me despido.</p>
-              </div>
+                  <div className="pt-2 text-[10px] text-gray-600 space-y-1">
+                    <p className="font-bold text-gray-700 uppercase">Condiciones y Políticas Generales de la Empresa:</p>
+                    <p className="text-justify">
+                      SERVICIOS - Toda cotización de servicios, como ser instalaciones, servicio técnico, revisiones, reparaciones, mantenimientos, etc., son solo una estimación del precio por servicio y no el precio final, el cual variará de acuerdo a la particularidad de cada servicio. Se debe tomar en cuenta que en cada servicio se debe realizar las pruebas operativas de los equipos y posteriormente se pueden requerir más cambios de repuestos u accesorios, que serán cobrados de forma adicional.
+                    </p>
+                    <p className="italic pt-0.5">Sin otro particular, me despido.</p>
+                  </div>
+                </>
+              ) : (
+                <div className="pt-2 text-[11px] text-gray-700">
+                  <p className="italic pt-0.5">Sin otro particular, me despido atentamente.</p>
+                </div>
+              )}
             </div>
 
             {/* G. Sección 6: Firmas al Pie */}
@@ -533,9 +785,11 @@ export default function Step4ReportPreview({
 
               <div>
                 <div className="w-48 mx-auto border-t border-gray-900 pt-1 font-bold text-gray-900">
-                  Dpto. Técnico de Laboratorio
+                  {tecnicoFirmanteNombre}
                 </div>
-                <p className="text-[10px] text-gray-600">Técnico Especialista RF</p>
+                <p className="text-[10px] text-gray-600">
+                  {tecnicoFirmanteCargo}
+                </p>
                 <p className="text-[9.5px] text-gray-400 font-semibold">AMERICA SISTEMAS DE COMUNICACIÓN</p>
               </div>
             </div>

@@ -121,7 +121,11 @@ export default function Step1Reception({
         newItems.push(safeImg);
       }
       
-      updateEquipo(activeEquipoIndex, { imagenes: [...currentImages, ...newItems] });
+      const combined = [...currentImages, ...newItems];
+      updateEquipo(activeEquipoIndex, { 
+        imagenes: combined,
+        imagenesRecepcion: combined
+      });
     } catch (err) {
       console.error('Error optimizando imágenes en Step 1:', err);
       alert('Hubo un error al optimizar las imágenes: ' + (err.message || 'Error desconocido'));
@@ -139,9 +143,11 @@ export default function Step1Reception({
         etapa: 'RECEPCION',
         name: `recepcion-${Date.now()}.webp`
       });
-      const currentImages = equipo.imagenes || [];
+      const currentImages = equipo.imagenes || equipo.imagenesRecepcion || [];
+      const combined = [...currentImages, safeImg];
       updateEquipo(activeEquipoIndex, {
-        imagenes: [...currentImages, safeImg]
+        imagenes: combined,
+        imagenesRecepcion: combined
       });
     } catch (err) {
       console.error('Error procesando imagen recortada:', err);
@@ -152,11 +158,18 @@ export default function Step1Reception({
   };
 
   const handleRemoveImage = (index) => {
-    const updated = (equipo.imagenes || []).filter((_, i) => i !== index);
-    updateEquipo(activeEquipoIndex, { imagenes: updated });
+    if (typeof window !== 'undefined' && !window.confirm('¿Desea eliminar esta fotografía de recepción?')) {
+      return;
+    }
+    const current = equipo.imagenes || equipo.imagenesRecepcion || [];
+    const updated = current.filter((_, i) => i !== index);
+    updateEquipo(activeEquipoIndex, { 
+      imagenes: updated,
+      imagenesRecepcion: updated
+    });
   };
 
-  const imagePreviews = equipo.imagenes || [];
+  const imagePreviews = equipo.imagenes || equipo.imagenesRecepcion || [];
 
   return (
     <div className="space-y-6 animate-slideUp">
@@ -609,17 +622,20 @@ export default function Step1Reception({
                 Sin fotos aún. Escanee el QR con su celular para fotografiar el radio y sus placas al instante.
               </p>
             ) : (
-              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 pt-1">
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5 pt-1">
                 {imagePreviews.map((img, idx) => (
-                  <div key={idx} className="relative group aspect-square rounded-xl overflow-hidden border border-slate-200 shadow-xs bg-slate-100">
+                  <div key={idx} className="relative group aspect-square rounded-2xl overflow-hidden border-2 border-slate-200/90 shadow-sm bg-slate-100 hover:border-[#E30613]/50 transition-all">
                     <img src={img.url} alt={img.name || `Evidencia ${idx + 1}`} className="w-full h-full object-cover" />
+                    <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 bg-black/65 text-white text-[10px] font-black rounded-md backdrop-blur-xs">
+                      #{idx + 1}
+                    </span>
                     <button
                       type="button"
                       onClick={() => handleRemoveImage(idx)}
-                      className="absolute top-1 right-1 w-5 h-5 bg-black/70 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
-                      title="Eliminar foto"
+                      className="absolute top-1.5 right-1.5 w-7 h-7 bg-red-600 hover:bg-red-700 active:scale-90 text-white rounded-full shadow-lg transition-all cursor-pointer z-10 flex items-center justify-center ring-2 ring-white/80"
+                      title="Eliminar foto de recepción"
                     >
-                      <X size={11} />
+                      <Trash2 size={13} />
                     </button>
                   </div>
                 ))}

@@ -59,6 +59,8 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
   const numeroOrden = formData.ordenServicio || formData.numero_orden || (formData.id ? String(formData.id) : '001');
   const cliente = (formData.cliente || formData.razon_social || 'CLIENTE MOSTRADOR').toUpperCase();
   const condiciones = formData.condiciones || {};
+  const tecnicoFirmanteNombre = condiciones.tecnicoFirmanteNombre || formData.tecnicoNombre || formData.tecnico_nombre_manual || (currentUser?.rol === 'TECNICO' ? currentUser.nombre_completo : 'Ramiro Condori');
+  const tecnicoFirmanteCargo = condiciones.tecnicoFirmanteCargo || 'Técnico Especialista RF';
 
   const fechaActual = new Date().toLocaleDateString('es-BO', {
     day: 'numeric',
@@ -357,7 +359,11 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
   });
 
   // SECCIÓN 3: CONCLUSIONES / RECOMENDACIONES (CONDICIONAL)
-  if (condiciones.incluirConclusiones) {
+  const conclusionesList = Array.isArray(condiciones.conclusiones)
+    ? condiciones.conclusiones.filter(Boolean)
+    : (condiciones.conclusionesTexto ? condiciones.conclusionesTexto.split('\n').filter(Boolean) : []);
+
+  if (condiciones.incluirConclusiones && conclusionesList.length > 0) {
     paragraphs.push(
       new Paragraph({
         spacing: { before: 250 },
@@ -380,7 +386,7 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
       })
     );
 
-    (condiciones.conclusiones || []).forEach((c) => {
+    conclusionesList.forEach((c) => {
       paragraphs.push(
         new Paragraph({
           bullet: { level: 0 },
@@ -395,6 +401,32 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
           new TextRun({
             text: 'Confirmarnos si se procede con el servicio técnico indicado.',
             italic: true,
+            size: 20
+          })
+        ],
+        spacing: { after: 150 }
+      })
+    );
+  }
+
+  // OBSERVACIONES / NOTAS ADICIONALES (CONDICIONAL)
+  if (condiciones.incluirNotas && condiciones.notasObservaciones?.trim()) {
+    paragraphs.push(
+      new Paragraph({
+        spacing: { before: 200 },
+        children: [
+          new TextRun({
+            text: 'OBSERVACIONES / NOTAS:',
+            bold: true,
+            underline: {},
+            size: 22
+          })
+        ]
+      }),
+      new Paragraph({
+        children: [
+          new TextRun({
+            text: condiciones.notasObservaciones.trim(),
             size: 20
           })
         ],
@@ -561,18 +593,31 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
         })
       ]
     }),
-    new Paragraph({
-      spacing: { before: 150 },
-      children: [
-        new TextRun({
-          text: 'CONDICIONES Y POLITICAS GENERALES DE LA EMPRESA:\n' +
-                'SERVICIOS - Toda cotización de servicios, como ser instalaciones, servicio técnico, revisiones, reparaciones, mantenimientos, etc., son solo una estimación del precio por servicio y no el precio final, el cual variará de acuerdo a la particularidad de cada servicio.\n' +
-                'Se debe tomar en cuenta que en cada servicio se debe realizar las pruebas operativas, de los equipos y posteriormente se pueden requerir más cambios de repuestos u accesorios, que serán cobrados de forma adicional.\n\n' +
-                'Sin otro particular, me despido.',
-          size: 19
-        })
-      ]
-    })
+    ...(condiciones.incluirPoliticasGenerales !== false ? [
+      new Paragraph({
+        spacing: { before: 150 },
+        children: [
+          new TextRun({
+            text: 'CONDICIONES Y POLITICAS GENERALES DE LA EMPRESA:\n' +
+                  'SERVICIOS - Toda cotización de servicios, como ser instalaciones, servicio técnico, revisiones, reparaciones, mantenimientos, etc., son solo una estimación del precio por servicio y no el precio final, el cual variará de acuerdo a la particularidad de cada servicio.\n' +
+                  'Se debe tomar en cuenta que en cada servicio se debe realizar las pruebas operativas, de los equipos y posteriormente se pueden requerir más cambios de repuestos u accesorios, que serán cobrados de forma adicional.\n\n' +
+                  'Sin otro particular, me despido.',
+            size: 19
+          })
+        ]
+      })
+    ] : [
+      new Paragraph({
+        spacing: { before: 150 },
+        children: [
+          new TextRun({
+            text: 'Sin otro particular, me despido.',
+            italic: true,
+            size: 20
+          })
+        ]
+      })
+    ])
   );
 
   // SECCIÓN 6: FIRMAS AL PIE
@@ -611,8 +656,8 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
                   alignment: AlignmentType.CENTER,
                   children: [
                     new TextRun({ text: '____________________________________\n', bold: true }),
-                    new TextRun({ text: 'Dpto. Técnico de Laboratorio\n', bold: true, size: 21 }),
-                    new TextRun({ text: 'Técnico Especialista RF\nAMERICA SISTEMAS DE COMUNICACIÓN', size: 18 })
+                    new TextRun({ text: `${tecnicoFirmanteNombre}\n`, bold: true, size: 21 }),
+                    new TextRun({ text: `${tecnicoFirmanteCargo}\nAMERICA SISTEMAS DE COMUNICACIÓN`, size: 18 })
                   ]
                 })
               ]
