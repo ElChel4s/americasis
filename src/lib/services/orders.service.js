@@ -24,6 +24,24 @@ import { UsersService, normalizeEmail } from './users.service';
 const inMemoryOrderImages = new Map();
 
 /**
+ * Extrae la URL utilizable de cualquier objeto o cadena de imagen de forma infalible
+ */
+export const resolveImageUrl = (img) => {
+  if (!img) return '';
+  if (typeof img === 'string') return img.trim();
+  if (typeof img.url === 'string' && img.url) return img.url.trim();
+  if (typeof img.preview === 'string' && img.preview) return img.preview.trim();
+  if (typeof img.dataUrl === 'string' && img.dataUrl) return img.dataUrl.trim();
+  if (typeof img.data === 'string' && img.data) return img.data.trim();
+  if (typeof img.src === 'string' && img.src) return img.src.trim();
+  if (typeof img.url_archivo === 'string' && img.url_archivo) return img.url_archivo.trim();
+  if (typeof img.base64 === 'string' && img.base64) {
+    return img.base64.startsWith('data:') ? img.base64.trim() : `data:image/jpeg;base64,${img.base64.trim()}`;
+  }
+  return '';
+};
+
+/**
  * Lee las órdenes locales directamente de localStorage de forma segura
  */
 const getStoredLocalOrders = () => {
@@ -66,25 +84,31 @@ const safeSaveLocalStorage = (orders) => {
     console.warn('[OrdersService] QuotaExceededError detectado. Activando fallback de fotos en memoria RAM...');
   }
 
-  // Intento 2: Conservar las primeras 5 órdenes completas (órdenes activas en taller)
-  // y solo aligerar las fotos de órdenes históricas antiguas (> índice 4)
+  // Intento 2: Conservar las primeras 15 órdenes completas (órdenes activas y recientes)
+  // y solo aligerar las fotos de órdenes históricas antiguas (> índice 14)
   try {
     const strippedOrders = orders.map((order, orderIdx) => {
-      // Las 5 órdenes más recientes conservan 100% sus fotos completas
-      if (orderIdx < 5) {
+      // Las primeras 15 órdenes conservan 100% sus fotos completas
+      if (orderIdx < 15) {
         return order;
       }
       // Para órdenes antiguas del historial, aligerar para respetar cuota
       const sanitizedEquipos = (order.equipos || []).map(eq => ({
         ...eq,
-        imagenes: (eq.imagenes || []).map(img => ({
-          ...img,
-          url: (typeof img.url === 'string' && !img.url.startsWith('data:')) ? img.url : ''
-        })),
-        imagenesInternas: (eq.imagenesInternas || []).map(img => ({
-          ...img,
-          url: (typeof img.url === 'string' && !img.url.startsWith('data:')) ? img.url : ''
-        }))
+        imagenes: (eq.imagenes || eq.imagenesRecepcion || []).map(img => {
+          const u = resolveImageUrl(img);
+          return {
+            ...img,
+            url: (!u.startsWith('data:')) ? u : ''
+          };
+        }),
+        imagenesInternas: (eq.imagenesInternas || eq.imagenesDiagnostico || []).map(img => {
+          const u = resolveImageUrl(img);
+          return {
+            ...img,
+            url: (!u.startsWith('data:')) ? u : ''
+          };
+        })
       }));
       return { ...order, equipos: sanitizedEquipos };
     });
@@ -98,9 +122,9 @@ const safeSaveLocalStorage = (orders) => {
     console.warn('[OrdersService] Fallback 2: Reduciendo cuota histórica...', fallbackErr);
   }
 
-  // Intento 3: Guardar últimas 15 órdenes aligeradas para salvar datos críticos
+  // Intento 3: Guardar últimas 25 órdenes aligeradas para salvar datos críticos
   try {
-    const ultraLightOrders = orders.slice(0, 15).map(o => ({
+    const ultraLightOrders = orders.slice(0, 25).map(o => ({
       ...o,
       equipos: (o.equipos || []).map(eq => ({ ...eq, imagenes: [], imagenesInternas: [] }))
     }));
@@ -133,10 +157,19 @@ const rehydrateOrder = (order) => {
     if (cachedImages) {
       const cachedEntry = cachedImages.find(c => c.equipoIndex === idx);
       if (cachedEntry) {
-        if (Array.isArray(cachedEntry.imagenes) && cachedEntry.imagenes.length > 0 && imagenes.length === 0) {
+        const hasValidExterior = imagenes.some(img => {
+          const u = resolveImageUrl(img);
+          return Boolean(u && u.length > 15);
+        });
+        if (!hasValidExterior && Array.isArray(cachedEntry.imagenes) && cachedEntry.imagenes.length > 0) {
           imagenes = cachedEntry.imagenes;
         }
-        if (Array.isArray(cachedEntry.imagenesInternas) && cachedEntry.imagenesInternas.length > 0 && imagenesInternas.length === 0) {
+
+        const hasValidInternas = imagenesInternas.some(img => {
+          const u = resolveImageUrl(img);
+          return Boolean(u && u.length > 15);
+        });
+        if (!hasValidInternas && Array.isArray(cachedEntry.imagenesInternas) && cachedEntry.imagenesInternas.length > 0) {
           imagenesInternas = cachedEntry.imagenesInternas;
         }
       }
@@ -198,7 +231,15 @@ const mergeOrderPreservingPhotos = (serverOrder, localOrder) => {
       ? lEq.imagenes
       : (Array.isArray(lEq.imagenesRecepcion) && lEq.imagenesRecepcion.length > 0 ? lEq.imagenesRecepcion : []);
 
-    const finalImgs = (sImgs.length > 0 && !sImgs.every(img => !img.url || img.url === '')) ? sImgs : lImgs;
+    const hasValidPhoto = (arr) => {
+      if (!Array.isArray(arr) || arr.length === 0) return false;
+      return arr.some(img => {
+        const u = resolveImageUrl(img);
+        return Boolean(u && u.length > 15);
+      });
+    };
+
+    const finalImgs = hasValidPhoto(lImgs) ? lImgs : (hasValidPhoto(sImgs) ? sImgs : (lImgs.length > 0 ? lImgs : sImgs));
 
     // 2. Fotos de diagnóstico (interior / laboratorio)
     const sImgsInt = (Array.isArray(sEq.imagenesInternas) && sEq.imagenesInternas.length > 0)
@@ -209,7 +250,7 @@ const mergeOrderPreservingPhotos = (serverOrder, localOrder) => {
       ? lEq.imagenesInternas
       : (Array.isArray(lEq.imagenesDiagnostico) && lEq.imagenesDiagnostico.length > 0 ? lEq.imagenesDiagnostico : []);
 
-    const finalImgsInt = (sImgsInt.length > 0 && !sImgsInt.every(img => !img.url || img.url === '')) ? sImgsInt : lImgsInt;
+    const finalImgsInt = hasValidPhoto(lImgsInt) ? lImgsInt : (hasValidPhoto(sImgsInt) ? sImgsInt : (lImgsInt.length > 0 ? lImgsInt : sImgsInt));
 
     // 3. Accesorios de recepción
     const accObj = (sEq.accesoriosRecepcion && Object.keys(sEq.accesoriosRecepcion).length > 0)
@@ -386,7 +427,7 @@ export const OrdersService = {
 
       const safeImagenes = (eq.imagenes || eq.imagenesRecepcion || []).map((img, imgIdx) => ({
         id: img.id || `img-${i}-${imgIdx}-${Date.now()}`,
-        url: typeof img.url === 'string' ? img.url : '',
+        url: resolveImageUrl(img),
         name: img.name || `Evidencia ${imgIdx + 1}`,
         etapa: img.etapa || 'RECEPCION',
         sizeKb: img.sizeKb || null
@@ -394,7 +435,7 @@ export const OrdersService = {
 
       const safeImagenesInternas = (eq.imagenesInternas || eq.imagenesDiagnostico || []).map((img, imgIdx) => ({
         id: img.id || `img-int-${i}-${imgIdx}-${Date.now()}`,
-        url: typeof img.url === 'string' ? img.url : '',
+        url: resolveImageUrl(img),
         name: img.name || `Diagnóstico ${imgIdx + 1}`,
         etapa: img.etapa || 'DIAGNOSTICO',
         sizeKb: img.sizeKb || null
@@ -1093,6 +1134,49 @@ export const OrdersService = {
       broadcastOrdersUpdate(orders[index]);
       return rehydrateOrder(orders[index]);
     }
+  },
+
+  /**
+   * Elimina permanentemente una orden de servicio (Solo Rol Administrador)
+   * Limpia de localStorage, memoria RAM y notifica al backend/Supabase
+   */
+  deleteOrder: async (orderId) => {
+    if (!orderId) return { success: false, error: 'ID de orden no especificado' };
+
+    const targetKey = String(orderId).trim();
+    console.info(`[OrdersService] Eliminando orden ${targetKey}...`);
+
+    // 1. Eliminar de localStorage inmediatamente
+    if (typeof window !== 'undefined') {
+      try {
+        const local = getStoredLocalOrders();
+        const filtered = local.filter(o => 
+          String(o.id) !== targetKey && 
+          String(o.numero_orden) !== targetKey &&
+          String(o.ordenServicio || '') !== targetKey
+        );
+        safeSaveLocalStorage(filtered);
+      } catch (err) {
+        console.warn('[OrdersService] Error eliminando orden de localStorage:', err);
+      }
+    }
+
+    // 2. Limpiar de la memoria RAM de sesión
+    inMemoryOrderImages.delete(targetKey);
+
+    // 3. Notificar al backend / API REST y a Supabase
+    try {
+      await fetch(`/api/orders/${encodeURIComponent(targetKey)}`, {
+        method: 'DELETE'
+      });
+    } catch (apiErr) {
+      console.warn('[OrdersService] Error llamando a DELETE /api/orders:', apiErr);
+    }
+
+    // 4. Emitir eventos reactivos para actualización inmediata de interfaces y contadores
+    broadcastOrdersUpdate(null);
+
+    return { success: true };
   }
 };
 

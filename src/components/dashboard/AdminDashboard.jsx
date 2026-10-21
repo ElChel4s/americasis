@@ -7,7 +7,7 @@ import {
   Shield, Users, Search, ChevronRight, Plus,
   Wrench, DollarSign, FileText, CheckCircle2, Clock,
   RefreshCw, Radio, Eye, ExternalLink, ArrowRight,
-  UserCheck, ShieldAlert, Check, X
+  UserCheck, ShieldAlert, Check, X, Trash2
 } from 'lucide-react';
 import { OrdersService } from '@/lib/services/orders.service';
 import { formatCurrency } from '@/lib/utils/currencyFormat';
@@ -34,6 +34,42 @@ export default function AdminDashboard({ onNewOrder }) {
   const [assignModalOrder, setAssignModalOrder] = useState(null);
   const [selectedTechnicianId, setSelectedTechnicianId] = useState('');
   const [isAssigning, setIsAssigning] = useState(false);
+
+  // Eliminación de órdenes (Rol Administrador)
+  const [orderToDelete, setOrderToDelete] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    try {
+      const r = (localStorage.getItem('america_user_role') || '').toUpperCase();
+      const u = JSON.parse(localStorage.getItem('america_user') || '{}');
+      const rol = (u?.rol || r || '').toUpperCase();
+      setIsAdmin(rol === 'ADMINISTRADOR' || rol === 'ADMIN' || (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')));
+    } catch {
+      setIsAdmin(true);
+    }
+  }, []);
+
+  const handleConfirmDelete = async () => {
+    if (!orderToDelete?.id) return;
+    try {
+      setIsDeleting(true);
+      const success = await OrdersService.deleteOrder(orderToDelete.id);
+      if (success) {
+        showToast(`Orden ${orderToDelete.numero_orden || orderToDelete.id} eliminada correctamente.`);
+        setOrders(prev => prev.filter(o => o.id !== orderToDelete.id && o.numero_orden !== orderToDelete.numero_orden));
+      } else {
+        showToast('Error al eliminar la orden.');
+      }
+    } catch (err) {
+      console.error('Error al eliminar orden:', err);
+      showToast('No se pudo eliminar la orden.');
+    } finally {
+      setIsDeleting(false);
+      setOrderToDelete(null);
+    }
+  };
 
   const fetchOrders = async (silent = false) => {
     try {
@@ -496,6 +532,19 @@ export default function AdminDashboard({ onNewOrder }) {
                             <DollarSign size={13} className="text-emerald-400" />
                             <span>Presupuesto / Doc</span>
                           </button>
+
+                          {/* Botón 3: Eliminar Orden (Exclusivo Administrador) */}
+                          {isAdmin && (
+                            <button
+                              type="button"
+                              onClick={() => setOrderToDelete(ord)}
+                              className="px-2 py-1.5 rounded-lg border border-red-200 bg-white hover:bg-red-50 text-red-600 hover:text-red-700 font-bold text-[11px] flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
+                              title="Eliminar orden de servicio (Solo Administrador)"
+                            >
+                              <Trash2 size={13} />
+                              <span className="hidden sm:inline">Eliminar</span>
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -575,6 +624,63 @@ export default function AdminDashboard({ onNewOrder }) {
                 className="px-5 py-2.5 rounded-xl text-xs font-black bg-navy hover:bg-slate-800 text-white shadow-md cursor-pointer disabled:opacity-50 transition-all"
               >
                 {isAssigning ? 'Guardando Asignación...' : 'Confirmar Asignación'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: CONFIRMACIÓN DE ELIMINACIÓN DE ORDEN (SOLO ADMINISTRADOR) */}
+      {orderToDelete && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 border border-slate-200 shadow-2xl animate-in zoom-in-95">
+            <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+              <span className="p-2.5 bg-red-100 text-red-600 rounded-xl">
+                <Trash2 size={20} />
+              </span>
+              <div>
+                <h3 className="font-black text-gray-900 text-base">Eliminar Orden de Servicio</h3>
+                <p className="text-xs text-slate-500 font-medium">Acción irreversible para Administradores</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-gray-700 leading-relaxed">
+              ¿Estás seguro de eliminar la orden{' '}
+              <strong className="text-navy font-mono font-black">
+                {orderToDelete.numero_orden || (orderToDelete.id ? `OS-${String(orderToDelete.id).padStart(5, '0')}` : 'S/N')}
+              </strong>{' '}
+              del cliente{' '}
+              <strong className="text-navy font-bold">
+                {orderToDelete.razon_social || orderToDelete.cliente || 'Consumidor Final'}
+              </strong>? Esta acción no se puede deshacer.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setOrderToDelete(null)}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-100 font-bold text-xs transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleConfirmDelete}
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-md disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <>
+                    <RefreshCw size={13} className="animate-spin" />
+                    <span>Eliminando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={13} />
+                    <span>Eliminar Definitivamente</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

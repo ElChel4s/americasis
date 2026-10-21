@@ -56,3 +56,22 @@ export async function PUT(request, { params }) {
   }
 }
 
+export async function DELETE(request, { params }) {
+  try {
+    const user = verifyAuth(request);
+    if (user && user.rol && user.rol !== 'ADMINISTRADOR') {
+      return errorResponse('Acceso denegado: Solo el Administrador puede eliminar órdenes de servicio', 403);
+    }
+
+    const resolvedParams = await Promise.resolve(params);
+    const id = resolvedParams?.id;
+    if (!id) return errorResponse('ID de orden no especificado', 400);
+
+    const result = await OrdersService.deleteOrder(id, user);
+    return successResponse(result, 'Orden eliminada exitosamente');
+  } catch (error) {
+    console.error(`Error en DELETE /api/orders/${params?.id}:`, error);
+    return errorResponse(error.message || 'Error al eliminar la orden', 500);
+  }
+}
+

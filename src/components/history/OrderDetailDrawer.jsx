@@ -22,8 +22,11 @@ import {
   ExternalLink,
   ChevronRight,
   ShieldCheck,
-  Printer
+  Printer,
+  Camera,
+  Sparkles
 } from 'lucide-react';
+import { resolveImageUrl } from '@/lib/services/orders.service';
 
 const ESTADO_CONFIG = {
   BORRADOR: { label: 'Borrador', bg: 'bg-slate-100 text-slate-700 border-slate-200' },
@@ -90,6 +93,48 @@ export default function OrderDetailDrawer({
   const activeEquipo = equipos[activeEquipoTab] || equipos[0] || {};
   const estadoInfo = ESTADO_CONFIG[currentOrder?.estado] || ESTADO_CONFIG.EN_DIAGNOSTICO;
   const numeroOrden = currentOrder?.numero_orden || `OS-${String(currentOrder?.id).padStart(5, '0')}`;
+
+  const activePhotos = React.useMemo(() => {
+    if (!activeEquipo) return { reception: [], diagnosis: [] };
+    const reception = [];
+    const diagnosis = [];
+    const seen = new Set();
+
+    const rawRecepcion = [
+      ...(Array.isArray(activeEquipo.imagenesRecepcion) ? activeEquipo.imagenesRecepcion : []),
+      ...(Array.isArray(activeEquipo.fotosRecepcion) ? activeEquipo.fotosRecepcion : []),
+      ...(Array.isArray(activeEquipo.imagenes) ? activeEquipo.imagenes.filter(img => {
+        const et = String(img?.etapa || img?.tipo || '').toUpperCase();
+        return et !== 'DIAGNOSTICO' && et !== 'INTERNA' && et !== 'INTERNO';
+      }) : [])
+    ];
+
+    const rawDiagnostico = [
+      ...(Array.isArray(activeEquipo.imagenesInternas) ? activeEquipo.imagenesInternas : []),
+      ...(Array.isArray(activeEquipo.imagenesDiagnostico) ? activeEquipo.imagenesDiagnostico : []),
+      ...(Array.isArray(activeEquipo.fotosDiagnostico) ? activeEquipo.fotosDiagnostico : []),
+      ...(Array.isArray(activeEquipo.imagenes) ? activeEquipo.imagenes.filter(img => {
+        const et = String(img?.etapa || img?.tipo || '').toUpperCase();
+        return et === 'DIAGNOSTICO' || et === 'INTERNA' || et === 'INTERNO';
+      }) : [])
+    ];
+
+    rawRecepcion.forEach((img, i) => {
+      const url = resolveImageUrl(img);
+      if (!url || seen.has(url)) return;
+      seen.add(url);
+      reception.push({ ...img, url, etapa: 'Recepción', name: img?.name || `Exterior #${i + 1}` });
+    });
+
+    rawDiagnostico.forEach((img, i) => {
+      const url = resolveImageUrl(img);
+      if (!url || seen.has(url)) return;
+      seen.add(url);
+      diagnosis.push({ ...img, url, etapa: 'Diagnóstico', name: img?.name || `Laboratorio #${i + 1}` });
+    });
+
+    return { reception, diagnosis };
+  }, [activeEquipo]);
 
   const handleDownloadDocx = async () => {
     if (!currentOrder?.id) return;
@@ -316,6 +361,34 @@ export default function OrderDetailDrawer({
                               <span className="font-mono font-bold text-navy">
                                 {currentOrder?.moneda === 'USD' ? '$' : 'Bs.'} {(parseFloat(r.precio) * (parseInt(r.cantidad, 10) || 1)).toFixed(2)}
                               </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Evidencias Fotográficas de este Equipo */}
+                    {(activePhotos.reception.length > 0 || activePhotos.diagnosis.length > 0) && (
+                      <div>
+                        <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1.5 flex items-center gap-1">
+                          <Camera size={12} className="text-[#E30613]" />
+                          <span>Evidencias Fotográficas ({activePhotos.reception.length + activePhotos.diagnosis.length} fotos)</span>
+                        </span>
+                        <div className="grid grid-cols-2 gap-2">
+                          {activePhotos.reception.map((f, i) => (
+                            <div key={`rec-${i}`} className="border border-slate-200 rounded-lg overflow-hidden bg-slate-50 p-1">
+                              <img src={f.url} alt={f.name} className="w-full h-24 sm:h-28 object-contain rounded bg-white" />
+                              <div className="text-[10px] text-slate-600 font-semibold p-1 truncate text-center">
+                                <span className="text-[#E30613] font-bold">Recepción:</span> {f.name}
+                              </div>
+                            </div>
+                          ))}
+                          {activePhotos.diagnosis.map((f, i) => (
+                            <div key={`diag-${i}`} className="border border-slate-200 rounded-lg overflow-hidden bg-slate-50 p-1">
+                              <img src={f.url} alt={f.name} className="w-full h-24 sm:h-28 object-contain rounded bg-white" />
+                              <div className="text-[10px] text-slate-600 font-semibold p-1 truncate text-center">
+                                <span className="text-blue-600 font-bold">Diagnóstico:</span> {f.name}
+                              </div>
                             </div>
                           ))}
                         </div>

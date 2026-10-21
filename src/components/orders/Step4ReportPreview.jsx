@@ -16,6 +16,7 @@ import {
 } from '@/lib/utils/currencyFormat';
 import { generateDocxBlob } from '@/lib/utils/docxExport';
 import { UsersService } from '@/lib/services/users.service';
+import { resolveImageUrl } from '@/lib/services/orders.service';
 
 function formatFechaBolivia(date = new Date()) {
   const MESES = [
@@ -233,43 +234,90 @@ export default function Step4ReportPreview({
     return arr.join(', ');
   };
 
-  // Fotos divididas en Recepción y Diagnóstico para Sección 7
-  const fotosRecepcion = useMemo(() => {
-    return (formData.equipos || []).flatMap((eq, eqIdx) => {
-      const imgs = (Array.isArray(eq.imagenes) && eq.imagenes.length > 0)
-        ? eq.imagenes
-        : (Array.isArray(eq.imagenesRecepcion) && eq.imagenesRecepcion.length > 0 ? eq.imagenesRecepcion : []);
-      return imgs.map((img, i) => {
-        const url = typeof img === 'string' ? img : (img?.url || '');
-        return {
+  // Fotos multi-equipo divididas en Recepción y Diagnóstico para Sección 7 (Anexo Fotográfico)
+  const allEquipmentPhotos = useMemo(() => {
+    const reception = [];
+    const diagnosis = [];
+    const seenUrls = new Set();
+
+    (formData.equipos || []).forEach((eq, eqIdx) => {
+      const handyNum = eq.orden_indice || (eqIdx + 1);
+      const handyLabel = `${eq.marca || 'Motorola'} ${eq.modelo || `Handy #${handyNum}`}`.trim();
+      const serie = eq.serie || eq.numero_serie || `Handy #${handyNum}`;
+
+      // 1. Recolectar candidatos de fotos de recepción (exterior)
+      const rawRecepcion = [
+        ...(Array.isArray(eq.imagenesRecepcion) ? eq.imagenesRecepcion : []),
+        ...(Array.isArray(eq.fotosRecepcion) ? eq.fotosRecepcion : []),
+        ...(Array.isArray(eq.imagenes) ? eq.imagenes.filter(img => {
+          const et = String(img?.etapa || img?.tipo || '').toUpperCase();
+          return et !== 'DIAGNOSTICO' && et !== 'INTERNA' && et !== 'INTERNO';
+        }) : []),
+        ...(Array.isArray(eq.evidencias) ? eq.evidencias.filter(img => {
+          const et = String(img?.etapa || img?.tipo || '').toUpperCase();
+          return et !== 'DIAGNOSTICO' && et !== 'INTERNA' && et !== 'INTERNO';
+        }) : []),
+        ...(Array.isArray(eq.fotos) ? eq.fotos.filter(img => {
+          const et = String(img?.etapa || img?.tipo || '').toUpperCase();
+          return et !== 'DIAGNOSTICO' && et !== 'INTERNA' && et !== 'INTERNO';
+        }) : [])
+      ];
+
+      // 2. Recolectar candidatos de fotos de diagnóstico (interior / placa)
+      const rawDiagnostico = [
+        ...(Array.isArray(eq.imagenesInternas) ? eq.imagenesInternas : []),
+        ...(Array.isArray(eq.imagenesDiagnostico) ? eq.imagenesDiagnostico : []),
+        ...(Array.isArray(eq.fotosDiagnostico) ? eq.fotosDiagnostico : []),
+        ...(Array.isArray(eq.imagenes) ? eq.imagenes.filter(img => {
+          const et = String(img?.etapa || img?.tipo || '').toUpperCase();
+          return et === 'DIAGNOSTICO' || et === 'INTERNA' || et === 'INTERNO';
+        }) : []),
+        ...(Array.isArray(eq.evidencias) ? eq.evidencias.filter(img => {
+          const et = String(img?.etapa || img?.tipo || '').toUpperCase();
+          return et === 'DIAGNOSTICO' || et === 'INTERNA' || et === 'INTERNO';
+        }) : []),
+        ...(Array.isArray(eq.fotos) ? eq.fotos.filter(img => {
+          const et = String(img?.etapa || img?.tipo || '').toUpperCase();
+          return et === 'DIAGNOSTICO' || et === 'INTERNA' || et === 'INTERNO';
+        }) : [])
+      ];
+
+      // Insertar en recepción evitando duplicados de URL
+      rawRecepcion.forEach((img, i) => {
+        const url = resolveImageUrl(img);
+        if (!url || seenUrls.has(url)) return;
+        seenUrls.add(url);
+        reception.push({
           ...img,
           url,
-          equipoLabel: `${eq.marca || 'Radio'} ${eq.modelo || `Equipo #${eqIdx + 1}`}`,
-          serie: eq.serie || eq.numero_serie || 'S/N',
+          equipoLabel: handyLabel,
+          serie,
+          etapa: 'Recepción',
           etiqueta: img?.name || `Foto Exterior #${i + 1}`
-        };
-      }).filter(f => Boolean(f.url));
-    });
-  }, [formData.equipos]);
+        });
+      });
 
-  const fotosDiagnostico = useMemo(() => {
-    return (formData.equipos || []).flatMap((eq, eqIdx) => {
-      const imgs = (Array.isArray(eq.imagenesInternas) && eq.imagenesInternas.length > 0)
-        ? eq.imagenesInternas
-        : (Array.isArray(eq.imagenesDiagnostico) && eq.imagenesDiagnostico.length > 0 ? eq.imagenesDiagnostico : []);
-      return imgs.map((img, i) => {
-        const url = typeof img === 'string' ? img : (img?.url || '');
-        return {
+      // Insertar en diagnóstico evitando duplicados
+      rawDiagnostico.forEach((img, i) => {
+        const url = resolveImageUrl(img);
+        if (!url || seenUrls.has(url)) return;
+        seenUrls.add(url);
+        diagnosis.push({
           ...img,
           url,
-          equipoLabel: `${eq.marca || 'Radio'} ${eq.modelo || `Equipo #${eqIdx + 1}`}`,
-          serie: eq.serie || eq.numero_serie || 'S/N',
+          equipoLabel: handyLabel,
+          serie,
+          etapa: 'Diagnóstico',
           etiqueta: img?.name || `Foto Placa / Laboratorio #${i + 1}`
-        };
-      }).filter(f => Boolean(f.url));
+        });
+      });
     });
+
+    return { reception, diagnosis };
   }, [formData.equipos]);
 
+  const fotosRecepcion = allEquipmentPhotos.reception;
+  const fotosDiagnostico = allEquipmentPhotos.diagnosis;
   const tieneFotos = fotosRecepcion.length > 0 || fotosDiagnostico.length > 0;
 
   const ordenNumeroStr = formData.ordenServicio || formData.numero_orden || (formData.id ? `OS-${String(formData.id).padStart(5, '0')}` : 'PROV');
@@ -854,8 +902,9 @@ export default function Step4ReportPreview({
                           alt={foto.etiqueta}
                           className="w-full h-44 object-contain rounded bg-white"
                         />
-                        <div className="text-[10.5px] text-gray-700 text-center font-semibold">
-                          <span>{foto.equipoLabel}</span> — <span className="font-mono text-gray-500">S/N: {foto.serie}</span>
+                        <div className="text-[10.5px] text-gray-800 text-center font-semibold pt-1">
+                          <span className="font-bold text-gray-900">{foto.equipoLabel}</span> — <span className="font-mono text-gray-600 font-bold">S/N: {foto.serie}</span>
+                          <div className="text-[9.5px] text-[#E30613] font-medium truncate">{foto.etiqueta} (Etapa Recepción)</div>
                         </div>
                       </div>
                     ))
@@ -881,8 +930,9 @@ export default function Step4ReportPreview({
                           alt={foto.etiqueta}
                           className="w-full h-44 object-contain rounded bg-white"
                         />
-                        <div className="text-[10.5px] text-gray-700 text-center font-semibold">
-                          <span>{foto.equipoLabel}</span> — <span className="font-mono text-gray-500">Placa RF / Diagnóstico</span>
+                        <div className="text-[10.5px] text-gray-800 text-center font-semibold pt-1">
+                          <span className="font-bold text-gray-900">{foto.equipoLabel}</span> — <span className="font-mono text-gray-600 font-bold">S/N: {foto.serie}</span>
+                          <div className="text-[9.5px] text-blue-700 font-medium truncate">{foto.etiqueta} (Laboratorio RF)</div>
                         </div>
                       </div>
                     ))

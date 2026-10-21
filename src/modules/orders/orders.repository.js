@@ -1081,6 +1081,37 @@ export const OrdersRepository = {
       console.warn('[OrdersRepository] PG updateReception fallback:', pgErr.message);
       return { id: orderId, ...receptionData };
     }
+  },
+
+  /**
+   * Elimina permanentemente una orden y sus registros hijos
+   */
+  async deleteOrder(orderIdOrNumber) {
+    if (!orderIdOrNumber) return false;
+    const resolvedId = await this.resolveOrderUuid(orderIdOrNumber) || orderIdOrNumber;
+
+    if (supabase) {
+      try {
+        await supabase.from('orden_equipos').delete().eq('orden_id', resolvedId);
+        const { error } = await supabase.from('ordenes_servicio').delete().eq('id', resolvedId);
+        if (!error) return true;
+        console.warn('[OrdersRepository] Supabase deleteOrder error:', error.message);
+      } catch (err) {
+        console.warn('[OrdersRepository] Excepción borrando en Supabase:', err.message);
+      }
+    }
+
+    try {
+      await query(`DELETE FROM equipos WHERE orden_id = $1`, [resolvedId]).catch(() => {});
+      const { rowCount } = await query(
+        `DELETE FROM ordenes_servicio WHERE id = $1 OR numero_orden = $1`,
+        [orderIdOrNumber]
+      );
+      return rowCount > 0;
+    } catch (err) {
+      console.warn('[OrdersRepository] PG deleteOrder error:', err.message);
+      return false;
+    }
   }
 };
 

@@ -9,6 +9,7 @@ import Step1Reception from '@/components/orders/Step1Reception';
 import Step2Diagnosis from '@/components/orders/Step2Diagnosis';
 import Step3Pricing from '@/components/orders/Step3Pricing';
 import Step4ReportPreview from '@/components/orders/Step4ReportPreview';
+import { resolveImageUrl } from '@/lib/services/orders.service';
 
 const DEFAULT_EQUIPO = (index) => ({
   id: Date.now() + index,
@@ -169,7 +170,10 @@ function ServiceOrderWizardContent() {
                     costo_servicio: eq.costo_servicio !== undefined ? eq.costo_servicio : 150,
                     fallas: eq.fallas || [],
                     repuestos: eq.repuestos || [],
-                    imagenes: eq.evidencias || eq.imagenes || []
+                    imagenes: eq.imagenes || eq.imagenesRecepcion || eq.evidencias || [],
+                    imagenesRecepcion: eq.imagenesRecepcion || eq.imagenes || eq.evidencias || [],
+                    imagenesInternas: eq.imagenesInternas || eq.imagenesDiagnostico || [],
+                    imagenesDiagnostico: eq.imagenesDiagnostico || eq.imagenesInternas || []
                   }))
                 : [DEFAULT_EQUIPO(0)]
             });
@@ -328,7 +332,7 @@ function ServiceOrderWizardContent() {
 
           const safeImagenes = (eq.imagenes || eq.imagenesRecepcion || []).map((img, imgIdx) => ({
             id: img.id || `img-${i}-${imgIdx}-${Date.now()}`,
-            url: typeof img.url === 'string' ? img.url : '',
+            url: resolveImageUrl(img),
             name: img.name || `Evidencia ${imgIdx + 1}`,
             etapa: img.etapa || 'RECEPCION',
             sizeKb: img.sizeKb || null
@@ -336,7 +340,7 @@ function ServiceOrderWizardContent() {
 
           const safeImagenesInternas = (eq.imagenesInternas || eq.imagenesDiagnostico || []).map((img, imgIdx) => ({
             id: img.id || `img-int-${i}-${imgIdx}-${Date.now()}`,
-            url: typeof img.url === 'string' ? img.url : '',
+            url: resolveImageUrl(img),
             name: img.name || `Diagnóstico ${imgIdx + 1}`,
             etapa: img.etapa || 'DIAGNOSTICO',
             sizeKb: img.sizeKb || null

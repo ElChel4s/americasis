@@ -20,7 +20,8 @@ import {
   Sparkles,
   ExternalLink,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Trash2
 } from 'lucide-react';
 
 const ESTADO_BADGES = {
@@ -90,7 +91,9 @@ export default function OrdersTable({
   onPageChange,
   onSelectOrder,
   onSelectSerial,
-  onPrintReport
+  onPrintReport,
+  isAdmin = false,
+  onDeleteOrder = null
 }) {
   const [downloadingDocxId, setDownloadingDocxId] = useState(null);
 
@@ -301,6 +304,20 @@ export default function OrdersTable({
                         >
                           <FileDown size={15} className={downloadingDocxId === ord.id ? 'animate-bounce text-blue-600' : ''} />
                         </button>
+
+                        {isAdmin && onDeleteOrder && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDeleteOrder(ord);
+                            }}
+                            className="p-2 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors border border-slate-200 cursor-pointer"
+                            title="Eliminar orden de servicio (Solo Administrador)"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -396,6 +413,19 @@ export default function OrdersTable({
                 >
                   <FileDown size={16} />
                 </button>
+                {isAdmin && onDeleteOrder && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteOrder(ord);
+                    }}
+                    className="p-2 rounded-xl text-red-600 bg-red-50 hover:bg-red-100 border border-red-200"
+                    title="Eliminar orden (Solo Administrador)"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                )}
               </div>
             </div>
           );

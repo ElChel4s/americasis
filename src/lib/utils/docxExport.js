@@ -22,6 +22,7 @@ import {
   getRevisionCostText,
   normalizeCurrency
 } from './currencyFormat.js';
+import { resolveImageUrl } from '../services/orders.service.js';
 
 /**
  * Helper para cargar bytes de imagen tanto en navegador como en entorno Node.js
@@ -669,17 +670,60 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
   );
 
   // SECCIÓN 7: ANEXO FOTOGRÁFICO (SI HAY FOTOS)
-  const todasFotos = (formData.equipos || []).flatMap((eq, eqIdx) => {
-    const extImgs = (Array.isArray(eq.imagenes) && eq.imagenes.length > 0)
-      ? eq.imagenes
-      : (Array.isArray(eq.imagenesRecepcion) && eq.imagenesRecepcion.length > 0 ? eq.imagenesRecepcion : []);
-    const intImgs = (Array.isArray(eq.imagenesInternas) && eq.imagenesInternas.length > 0)
-      ? eq.imagenesInternas
-      : (Array.isArray(eq.imagenesDiagnostico) && eq.imagenesDiagnostico.length > 0 ? eq.imagenesDiagnostico : []);
+  const todasFotos = [];
+  const seenDocxUrls = new Set();
 
-    const ext = extImgs.map(img => ({ ...img, equipoLabel: eq.modelo || `Equipo ${eqIdx + 1}`, tipo: 'Recepción' }));
-    const int = intImgs.map(img => ({ ...img, equipoLabel: eq.modelo || `Equipo ${eqIdx + 1}`, tipo: 'Diagnóstico' }));
-    return [...ext, ...int];
+  (formData.equipos || []).forEach((eq, eqIdx) => {
+    const handyNum = eq.orden_indice || (eqIdx + 1);
+    const handyLabel = `${eq.marca || 'Motorola'} ${eq.modelo || `Handy #${handyNum}`}`.trim();
+    const serie = eq.serie || eq.numero_serie || `Handy #${handyNum}`;
+
+    const rawRecepcion = [
+      ...(Array.isArray(eq.imagenesRecepcion) ? eq.imagenesRecepcion : []),
+      ...(Array.isArray(eq.fotosRecepcion) ? eq.fotosRecepcion : []),
+      ...(Array.isArray(eq.imagenes) ? eq.imagenes.filter(img => {
+        const et = String(img?.etapa || img?.tipo || '').toUpperCase();
+        return et !== 'DIAGNOSTICO' && et !== 'INTERNA' && et !== 'INTERNO';
+      }) : [])
+    ];
+
+    const rawDiagnostico = [
+      ...(Array.isArray(eq.imagenesInternas) ? eq.imagenesInternas : []),
+      ...(Array.isArray(eq.imagenesDiagnostico) ? eq.imagenesDiagnostico : []),
+      ...(Array.isArray(eq.fotosDiagnostico) ? eq.fotosDiagnostico : []),
+      ...(Array.isArray(eq.imagenes) ? eq.imagenes.filter(img => {
+        const et = String(img?.etapa || img?.tipo || '').toUpperCase();
+        return et === 'DIAGNOSTICO' || et === 'INTERNA' || et === 'INTERNO';
+      }) : [])
+    ];
+
+    rawRecepcion.forEach((img, i) => {
+      const url = resolveImageUrl(img);
+      if (!url || seenDocxUrls.has(url)) return;
+      seenDocxUrls.add(url);
+      todasFotos.push({
+        ...img,
+        url,
+        equipoLabel: handyLabel,
+        serie,
+        tipo: 'Recepción (Exterior)',
+        name: img?.name || `Foto Ingreso #${i + 1}`
+      });
+    });
+
+    rawDiagnostico.forEach((img, i) => {
+      const url = resolveImageUrl(img);
+      if (!url || seenDocxUrls.has(url)) return;
+      seenDocxUrls.add(url);
+      todasFotos.push({
+        ...img,
+        url,
+        equipoLabel: handyLabel,
+        serie,
+        tipo: 'Diagnóstico (Laboratorio RF)',
+        name: img?.name || `Foto Placa #${i + 1}`
+      });
+    });
   });
 
   if (todasFotos.length > 0) {
@@ -713,7 +757,7 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
         new Paragraph({
           children: [
             new TextRun({
-              text: `[Foto ${fi + 1}] ${foto.equipoLabel} — Etapa de ${foto.tipo}: ${foto.name || 'Registro fotográfico'}`,
+              text: `[Foto ${fi + 1}] ${foto.equipoLabel} (S/N: ${foto.serie}) — Etapa de ${foto.tipo}: ${foto.name}`,
               bold: true,
               size: 20
             })

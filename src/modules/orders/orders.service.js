@@ -150,6 +150,24 @@ export const OrdersService = {
     } catch (e) {}
 
     return result;
+  },
+
+  async deleteOrder(orderId, user) {
+    const result = await OrdersRepository.deleteOrder(orderId);
+
+    try {
+      await logAudit({
+        ordenId: typeof orderId === 'string' && orderId.length > 20 ? orderId : (parseInt(orderId, 10) || null),
+        usuarioId: user?.id || null,
+        usuarioNombre: user?.nombre_completo || 'Administrador',
+        usuarioRol: user?.rol || 'ADMINISTRADOR',
+        accion: 'ELIMINAR_ORDEN',
+        estadoNuevo: null,
+        detalleCambio: `Orden #${orderId} eliminada permanentemente del sistema`
+      });
+    } catch (e) {}
+
+    return result;
   }
 };
 
