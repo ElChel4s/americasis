@@ -308,12 +308,41 @@ const broadcastOrdersUpdate = (order) => {
   if (typeof window !== 'undefined') {
     try {
       window.dispatchEvent(new CustomEvent('america_orders_updated', { detail: order }));
-      window.dispatchEvent(new Event('storage'));
     } catch (e) {}
   }
 };
 
+const currentlySyncingIds = new Set();
+let isFetchingOrders = false;
+
 export const OrdersService = {
+  /**
+   * Elimina una orden de la caché local y referencias huérfanas
+   */
+  removeOrderFromLocalCache: (id) => {
+    if (typeof window === 'undefined' || !id) return;
+    try {
+      const targetId = String(id).trim();
+      const current = getStoredLocalOrders();
+      const filtered = current.filter(o => 
+        String(o.id).trim() !== targetId && 
+        String(o.numero_orden || '').trim() !== targetId
+      );
+      if (filtered.length !== current.length) {
+        safeSaveLocalStorage(filtered);
+      }
+      try {
+        localStorage.removeItem('last_active_order_id');
+        const lastId = localStorage.getItem('last_order_id');
+        if (lastId === targetId) localStorage.removeItem('last_order_id');
+      } catch (e) {}
+      inMemoryOrderImages.delete(targetId);
+      console.info(`[OrdersService] Orden #${targetId} eliminada de caché local.`);
+    } catch (e) {
+      console.warn('[OrdersService] Error limpiando orden de caché local:', e);
+    }
+  },
+
   /**
    * Obtiene todas las órdenes, combinando el almacenamiento local con el backend
    * de forma segura (sin sobreescrituras que borren las imágenes locales).
@@ -324,12 +353,17 @@ export const OrdersService = {
     // 1. Cargar órdenes locales garantizadas
     let orders = getStoredLocalOrders();
 
+    if (isFetchingOrders) {
+      return orders.map(rehydrateOrder);
+    }
+
     // 2. Intentar consultar servidor si está disponible
+    isFetchingOrders = true;
     try {
       const res = await fetch('/api/orders');
       if (res.ok) {
         const result = await res.json();
-        if (result.success && Array.isArray(result.data) && result.data.length > 0) {
+        if (result.success && Array.isArray(result.data)) {
           const merged = [];
           const seenKeys = new Set();
 
@@ -345,8 +379,16 @@ export const OrdersService = {
           for (const lo of orders) {
             const key = String(lo.id || lo.numero_orden);
             if (!seenKeys.has(key)) {
+              // Si la orden local tiene un UUID válido pero NO vino en el servidor:
+              // Significa que fue eliminada en Supabase. Se omite para purgarla de localStorage.
+              const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(lo.id || ''));
+              if (isUuid) {
+                console.info(`[OrdersService] Omitiendo y limpiando orden huérfana de caché: ${lo.id}`);
+                continue;
+              }
+
               merged.push(rehydrateOrder(lo));
-              // Si tiene un ID temporal, subirla silenciosamente a Supabase en segundo plano
+              // Si tiene un ID temporal, subirla silenciosamente a Supabase en segundo plano una sola vez
               if (String(lo.id).length < 25 || !String(lo.id).includes('-')) {
                 OrdersService.syncLocalOrderToServer(lo).catch(() => {});
               }
@@ -366,6 +408,8 @@ export const OrdersService = {
       }
     } catch (apiErr) {
       // Si el backend no responde, continuar normalmente con las órdenes locales
+    } finally {
+      isFetchingOrders = false;
     }
 
     return orders.map(rehydrateOrder);
@@ -376,9 +420,18 @@ export const OrdersService = {
    */
   getOrderById: async (id) => {
     if (typeof window === 'undefined') return null;
+    if (!id || id === 'undefined' || id === 'null') return null;
 
     try {
       const res = await fetch(`/api/orders/${id}`);
+
+      // Si el servidor responde 404: La orden ya fue eliminada en Supabase
+      if (res.status === 404) {
+        console.warn(`[OrdersService] Orden #${id} no existe en el servidor (404). Limpiando de caché local...`);
+        OrdersService.removeOrderFromLocalCache(id);
+        return null;
+      }
+
       if (res.ok) {
         const result = await res.json();
         if (result.success && result.data) {
@@ -394,14 +447,20 @@ export const OrdersService = {
           }
           safeSaveLocalStorage(orders);
           return merged;
+        } else if (result.error) {
+          OrdersService.removeOrderFromLocalCache(id);
+          return null;
         }
       }
     } catch (e) {
-      console.warn('[OrdersService] Error fetching order from API, fallback to local list:', e);
+      console.warn('[OrdersService] Error de red fetching order from API:', e);
     }
 
-    const orders = await OrdersService.getOrders();
+    // Fallback únicamente si la red falló (offline)
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id));
+    const orders = getStoredLocalOrders();
     const found = orders.find(o => String(o.id) === String(id) || String(o.numero_orden) === String(id)) || null;
+
     if (found) return rehydrateOrder(found);
 
     return null;
@@ -626,6 +685,11 @@ export const OrdersService = {
    * Rescata una orden creada localmente y la sube silenciosamente a la base de datos central
    */
   syncLocalOrderToServer: async (localOrder) => {
+    if (!localOrder) return;
+    const orderKey = String(localOrder.id || localOrder.numero_orden || '').trim();
+    if (!orderKey || currentlySyncingIds.has(orderKey)) return;
+    currentlySyncingIds.add(orderKey);
+
     try {
       const res = await fetch('/api/orders', {
         method: 'POST',
@@ -662,6 +726,11 @@ export const OrdersService = {
         })
       });
 
+      if (res.status === 404) {
+        OrdersService.removeOrderFromLocalCache(localOrder.id);
+        return;
+      }
+
       if (res.ok) {
         const json = await res.json();
         if (json.success && json.data?.orden) {
@@ -674,7 +743,10 @@ export const OrdersService = {
           broadcastOrdersUpdate(synced);
         }
       }
-    } catch (e) {}
+    } catch (e) {
+    } finally {
+      currentlySyncingIds.delete(orderKey);
+    }
   },
 
   updateOrderStatus: async (id, status) => {

@@ -2,15 +2,25 @@ import { OrdersService } from '@/modules/orders/orders.service';
 import { successResponse, errorResponse } from '@/lib/common/api-response';
 import { verifyAuth } from '@/lib/common/auth-guard';
 
+import { NextResponse } from 'next/server';
+
 export async function GET(request, { params }) {
   try {
     const resolvedParams = await Promise.resolve(params);
     const id = resolvedParams?.id;
+    if (!id || id === 'undefined' || id === 'null') {
+      return NextResponse.json({ error: "Orden no encontrada", success: false }, { status: 404 });
+    }
+
     const order = await OrdersService.getOrderById(id);
+    if (!order) {
+      return NextResponse.json({ error: "Orden no encontrada", success: false }, { status: 404 });
+    }
+
     return successResponse(order, 'Orden obtenida exitosamente');
   } catch (error) {
-    console.error(`Error en GET /api/orders:`, error);
-    return errorResponse(error.message || 'Error al obtener la orden', 404);
+    console.error(`Error en GET /api/orders/${params?.id}:`, error.message);
+    return NextResponse.json({ error: "Orden no encontrada", message: error.message || "Orden no encontrada", success: false }, { status: 404 });
   }
 }
 

@@ -466,14 +466,19 @@ export default function Step2Diagnosis({
   }), [reparacionRechazada, motivoRechazo, textoDiagnostico, notasAdicionales, equipo.descripcion_servicio, subtotal1_servicio, subtotal2_accesorios, totalEquipo, fallasSeleccionadas, repuestos, imagenesInternas]);
 
   const lastSyncedRef = useRef('');
+  const onChangeRef = useRef(onChange);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  });
 
   useEffect(() => {
     const payloadStr = JSON.stringify(diagnosisPayload);
     if (lastSyncedRef.current !== payloadStr) {
       lastSyncedRef.current = payloadStr;
-      onChange?.(diagnosisPayload);
+      onChangeRef.current?.(diagnosisPayload);
     }
-  }, [diagnosisPayload, onChange]);
+  }, [diagnosisPayload]);
 
   // Fallas filtradas por buscador y categoría
   const fallasFiltradas = useMemo(() => {

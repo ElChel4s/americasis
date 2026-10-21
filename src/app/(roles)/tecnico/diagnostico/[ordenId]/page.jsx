@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft, Wrench, Send, Save, CheckCircle2,
@@ -27,12 +27,31 @@ export default function TecnicoDiagnosticoMesaPage() {
 
   useEffect(() => {
     let isMounted = true;
-    OrdersService.getOrderById(ordenId).then(data => {
-      if (isMounted) {
-        if (data) setOrder(data);
+    OrdersService.getOrderById(ordenId)
+      .then(data => {
+        if (!isMounted) return;
+        if (data) {
+          setOrder(data);
+          setLoading(false);
+        } else {
+          OrdersService.removeOrderFromLocalCache(ordenId);
+          setLoading(false);
+          alert("La orden solicitada ya no existe o fue eliminada.");
+          const role = typeof window !== 'undefined' ? (localStorage.getItem('america_user_role') || '') : '';
+          const redirectPath = role === 'ADMINISTRADOR' ? '/admin/inicio' : (role === 'RECEPCION' ? '/recepcion/inicio' : '/tecnico/inicio');
+          router.replace(redirectPath);
+        }
+      })
+      .catch(err => {
+        console.error('Error cargando orden en mesa técnica:', err);
+        if (!isMounted) return;
+        OrdersService.removeOrderFromLocalCache(ordenId);
         setLoading(false);
-      }
-    });
+        alert("La orden solicitada ya no existe o fue eliminada.");
+        const role = typeof window !== 'undefined' ? (localStorage.getItem('america_user_role') || '') : '';
+        const redirectPath = role === 'ADMINISTRADOR' ? '/admin/inicio' : (role === 'RECEPCION' ? '/recepcion/inicio' : '/tecnico/inicio');
+        router.replace(redirectPath);
+      });
 
     fetch('/api/auth/me')
       .then(r => r.json())
@@ -44,7 +63,7 @@ export default function TecnicoDiagnosticoMesaPage() {
       .catch(() => {});
 
     return () => { isMounted = false; };
-  }, [ordenId]);
+  }, [ordenId, router]);
 
   const showFeedbackMsg = (text, type = 'success') => {
     setFeedback({ text, type });
@@ -106,9 +125,9 @@ export default function TecnicoDiagnosticoMesaPage() {
     }
   };
 
-  const updateEquipoDiagnosis = (data) => {
-    if (!canEdit) return;
+  const updateEquipoDiagnosis = useCallback((data) => {
     setOrder(prev => {
+      if (!prev) return prev;
       const newEquipos = [...(prev.equipos || [])];
       newEquipos[activeEquipoIdx] = {
         ...newEquipos[activeEquipoIdx],
@@ -116,7 +135,7 @@ export default function TecnicoDiagnosticoMesaPage() {
       };
       return { ...prev, equipos: newEquipos };
     });
-  };
+  }, [activeEquipoIdx]);
 
   // Botón de salida 1: [ Guardar Avance ] (guarda como EN_DIAGNOSTICO)
   const handleGuardarAvance = async () => {

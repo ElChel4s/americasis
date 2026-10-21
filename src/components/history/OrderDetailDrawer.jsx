@@ -26,7 +26,7 @@ import {
   Camera,
   Sparkles
 } from 'lucide-react';
-import { resolveImageUrl } from '@/lib/services/orders.service';
+import { resolveImageUrl, OrdersService } from '@/lib/services/orders.service';
 
 const ESTADO_CONFIG = {
   BORRADOR: { label: 'Borrador', bg: 'bg-slate-100 text-slate-700 border-slate-200' },
@@ -63,14 +63,25 @@ export default function OrderDetailDrawer({
     setIsLoading(true);
 
     fetch(`/api/orders/${order.id}`)
-      .then(res => res.json())
+      .then(res => {
+        if (res.status === 404) {
+          return { notFound: true };
+        }
+        return res.json();
+      })
       .then(json => {
-        if (isMounted) {
-          if (json.success && json.data) {
-            setOrderDetails(json.data);
-          } else {
-            setOrderDetails(order); // fallback al prop
-          }
+        if (!isMounted) return;
+        if (json.notFound) {
+          OrdersService.removeOrderFromLocalCache(order.id);
+          setOrderDetails(null);
+          onClose?.();
+          alert("La orden solicitada ya no existe o fue eliminada.");
+          return;
+        }
+        if (json.success && json.data) {
+          setOrderDetails(json.data);
+        } else {
+          setOrderDetails(order); // fallback al prop
         }
       })
       .catch(err => {
@@ -84,7 +95,7 @@ export default function OrderDetailDrawer({
     return () => {
       isMounted = false;
     };
-  }, [order, isOpen]);
+  }, [order?.id, isOpen]);
 
   if (!isOpen) return null;
 

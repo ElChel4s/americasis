@@ -9,7 +9,7 @@ import Step1Reception from '@/components/orders/Step1Reception';
 import Step2Diagnosis from '@/components/orders/Step2Diagnosis';
 import Step3Pricing from '@/components/orders/Step3Pricing';
 import Step4ReportPreview from '@/components/orders/Step4ReportPreview';
-import { resolveImageUrl } from '@/lib/services/orders.service';
+import { resolveImageUrl, OrdersService } from '@/lib/services/orders.service';
 
 const DEFAULT_EQUIPO = (index) => ({
   id: Date.now() + index,
@@ -140,6 +140,15 @@ function ServiceOrderWizardContent() {
       async function loadOrder() {
         try {
           const res = await fetch(`/api/orders/${ordenParam}`);
+          if (res.status === 404) {
+            OrdersService.removeOrderFromLocalCache(ordenParam);
+            if (active) {
+              setOrdenId(null);
+              setIsWizardOpen(false);
+              alert("La orden solicitada ya no existe o fue eliminada.");
+            }
+            return;
+          }
           const json = await res.json();
           if (active && json.success && json.data) {
             const ord = json.data;

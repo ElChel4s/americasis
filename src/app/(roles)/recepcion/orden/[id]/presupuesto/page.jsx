@@ -51,16 +51,34 @@ function PresupuestoOrdenContent() {
     }
 
     let isMounted = true;
-    OrdersService.getOrderById(orderId).then(data => {
-      if (isMounted) {
+    OrdersService.getOrderById(orderId)
+      .then(data => {
+        if (!isMounted) return;
         if (data) {
           setOrder(data);
+          setLoading(false);
+        } else {
+          OrdersService.removeOrderFromLocalCache(orderId);
+          setLoading(false);
+          alert("La orden solicitada ya no existe o fue eliminada.");
+          const role = userRole || (typeof window !== 'undefined' ? localStorage.getItem('america_user_role') : '');
+          const redirectPath = role === 'ADMINISTRADOR' ? '/admin/inicio' : (role === 'TECNICO' ? '/tecnico/inicio' : '/recepcion/inicio');
+          router.replace(redirectPath);
         }
+      })
+      .catch(err => {
+        console.error('Error cargando orden en presupuesto:', err);
+        if (!isMounted) return;
+        OrdersService.removeOrderFromLocalCache(orderId);
         setLoading(false);
-      }
-    });
+        alert("La orden solicitada ya no existe o fue eliminada.");
+        const role = userRole || (typeof window !== 'undefined' ? localStorage.getItem('america_user_role') : '');
+        const redirectPath = role === 'ADMINISTRADOR' ? '/admin/inicio' : (role === 'TECNICO' ? '/tecnico/inicio' : '/recepcion/inicio');
+        router.replace(redirectPath);
+      });
+
     return () => { isMounted = false; };
-  }, [orderId, autoPrint, router]);
+  }, [orderId, autoPrint, router, userRole]);
 
   const updateForm = (updates) => {
     setOrder(prev => ({ ...prev, ...updates }));

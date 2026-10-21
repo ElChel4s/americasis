@@ -111,46 +111,58 @@ function EditarRecepcionContent() {
     let isMounted = true;
     OrdersService.getOrderById(orderId)
       .then(data => {
-        if (isMounted) {
-          if (data) {
-            setOrder(data);
-            const mapped = {
-              id: data.id,
-              cliente_id: data.cliente_id,
-              ordenServicio: data.numero_orden || data.ordenServicio || `OS-${String(data.id).padStart(5, '0')}`,
-              numero_orden: data.numero_orden || data.ordenServicio || `OS-${String(data.id).padStart(5, '0')}`,
-              cliente: data.razon_social || data.cliente || '',
-              razon_social: data.razon_social || data.cliente || '',
-              nit_ci: data.nit_ci || data.nit || '',
-              telefono: data.cliente_telefono || data.telefono || '',
-              cliente_telefono: data.cliente_telefono || data.telefono || '',
-              email: data.cliente_email || data.email || '',
-              cliente_email: data.cliente_email || data.email || '',
-              direccion: data.cliente_direccion || data.direccion || '',
-              cliente_direccion: data.cliente_direccion || data.direccion || '',
-              persona_contacto: data.persona_contacto || '',
-              moneda: data.moneda || 'BOB',
-              usuario_tecnico_id: data.usuario_tecnico_id || data.tecnicoAsignadoId || data.tecnico_asignado_id || '',
-              tecnicoAsignadoId: data.usuario_tecnico_id || data.tecnicoAsignadoId || data.tecnico_asignado_id || '',
-              tecnico_asignado_id: data.usuario_tecnico_id || data.tecnicoAsignadoId || data.tecnico_asignado_id || '',
-              tecnico_nombre_manual: data.tecnico_nombre_manual || data.tecnicoNombre || '',
-              tecnicoNombre: data.tecnico_nombre_manual || data.tecnicoNombre || '',
-              recepcionista_nombre_manual: data.recepcionista_nombre_manual || '',
-              notas_internas: data.notas_internas || '',
-              equipos: formatEquiposForStep1(data.equipos)
-            };
-            setFormData(mapped);
-          }
+        if (!isMounted) return;
+        if (data) {
+          setOrder(data);
+          const mapped = {
+            id: data.id,
+            cliente_id: data.cliente_id,
+            ordenServicio: data.numero_orden || data.ordenServicio || `OS-${String(data.id).padStart(5, '0')}`,
+            numero_orden: data.numero_orden || data.ordenServicio || `OS-${String(data.id).padStart(5, '0')}`,
+            cliente: data.razon_social || data.cliente || '',
+            razon_social: data.razon_social || data.cliente || '',
+            nit_ci: data.nit_ci || data.nit || '',
+            telefono: data.cliente_telefono || data.telefono || '',
+            cliente_telefono: data.cliente_telefono || data.telefono || '',
+            email: data.cliente_email || data.email || '',
+            cliente_email: data.cliente_email || data.email || '',
+            direccion: data.cliente_direccion || data.direccion || '',
+            cliente_direccion: data.cliente_direccion || data.direccion || '',
+            persona_contacto: data.persona_contacto || '',
+            moneda: data.moneda || 'BOB',
+            usuario_tecnico_id: data.usuario_tecnico_id || data.tecnicoAsignadoId || data.tecnico_asignado_id || '',
+            tecnicoAsignadoId: data.usuario_tecnico_id || data.tecnicoAsignadoId || data.tecnico_asignado_id || '',
+            tecnico_asignado_id: data.usuario_tecnico_id || data.tecnicoAsignadoId || data.tecnico_asignado_id || '',
+            tecnico_nombre_manual: data.tecnico_nombre_manual || data.tecnicoNombre || '',
+            tecnicoNombre: data.tecnico_nombre_manual || data.tecnicoNombre || '',
+            recepcionista_nombre_manual: data.recepcionista_nombre_manual || '',
+            notas_internas: data.notas_internas || '',
+            equipos: formatEquiposForStep1(data.equipos)
+          };
+          setFormData(mapped);
           setLoading(false);
+        } else {
+          OrdersService.removeOrderFromLocalCache(orderId);
+          setLoading(false);
+          alert("La orden solicitada ya no existe o fue eliminada.");
+          const role = userRole || (typeof window !== 'undefined' ? localStorage.getItem('america_user_role') : '');
+          const redirectPath = role === 'ADMINISTRADOR' ? '/admin/inicio' : (role === 'TECNICO' ? '/tecnico/inicio' : '/recepcion/inicio');
+          router.replace(redirectPath);
         }
       })
       .catch(err => {
         console.error('Error cargando orden:', err);
-        if (isMounted) setLoading(false);
+        if (!isMounted) return;
+        OrdersService.removeOrderFromLocalCache(orderId);
+        setLoading(false);
+        alert("La orden solicitada ya no existe o fue eliminada.");
+        const role = userRole || (typeof window !== 'undefined' ? localStorage.getItem('america_user_role') : '');
+        const redirectPath = role === 'ADMINISTRADOR' ? '/admin/inicio' : (role === 'TECNICO' ? '/tecnico/inicio' : '/recepcion/inicio');
+        router.replace(redirectPath);
       });
 
     return () => { isMounted = false; };
-  }, [orderId]);
+  }, [orderId, router, userRole]);
 
   const canEdit = userRole === 'RECEPCION' || userRole === 'ADMINISTRADOR';
 
