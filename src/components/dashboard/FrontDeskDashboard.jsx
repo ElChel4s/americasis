@@ -508,10 +508,17 @@ export default function FrontDeskDashboard() {
                     {/* Selector Directo 1-Clic */}
                     <div className="relative">
                       <select
-                        value={o.usuario_tecnico_id || o.tecnico_asignado_id || ''}
+                        value={(() => {
+                          const currentTechId = o.usuario_tecnico_id || o.tecnico_asignado_id || o.tecnicoAsignadoId || '';
+                          const matched = technicians.find(t => 
+                            (currentTechId && (String(t.id) === String(currentTechId) || (t.legacy_id && String(t.legacy_id) === String(currentTechId)))) ||
+                            (o.tecnico_nombre_manual && t.nombre_completo.toLowerCase() === o.tecnico_nombre_manual.toLowerCase())
+                          );
+                          return matched ? matched.id : currentTechId;
+                        })()}
                         onChange={async (e) => {
                           const techId = e.target.value;
-                          const tech = technicians.find(t => String(t.id) === String(techId));
+                          const tech = technicians.find(t => String(t.id) === String(techId) || (t.legacy_id && String(t.legacy_id) === String(techId)));
                           const techName = tech ? tech.nombre_completo : null;
                           try {
                             const updated = await OrdersService.assignTechnician(o.id, techId || null, techName);
@@ -789,10 +796,17 @@ export default function FrontDeskDashboard() {
                   )}
                 </div>
                 <select
-                  value={viewingProgressOrder.usuario_tecnico_id || ''}
+                  value={(() => {
+                    const currentTechId = viewingProgressOrder.usuario_tecnico_id || viewingProgressOrder.tecnico_asignado_id || viewingProgressOrder.tecnicoAsignadoId || '';
+                    const matched = technicians.find(t => 
+                      (currentTechId && (String(t.id) === String(currentTechId) || (t.legacy_id && String(t.legacy_id) === String(currentTechId)))) ||
+                      (viewingProgressOrder.tecnico_nombre_manual && t.nombre_completo.toLowerCase() === viewingProgressOrder.tecnico_nombre_manual.toLowerCase())
+                    );
+                    return matched ? matched.id : currentTechId;
+                  })()}
                   onChange={async (e) => {
                     const techId = e.target.value;
-                    const tech = technicians.find(t => String(t.id) === String(techId));
+                    const tech = technicians.find(t => String(t.id) === String(techId) || (t.legacy_id && String(t.legacy_id) === String(techId)));
                     const techName = tech ? tech.nombre_completo : null;
                     try {
                       const updated = await OrdersService.assignTechnician(viewingProgressOrder.id, techId || null, techName);

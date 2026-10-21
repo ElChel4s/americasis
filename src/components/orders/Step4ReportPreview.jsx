@@ -119,9 +119,13 @@ export default function Step4ReportPreview({
   }, []);
 
   const tecnicoAsignado = useMemo(() => {
-    const techId = formData.usuario_tecnico_id || formData.tecnicoAsignadoId;
+    const techId = formData.usuario_tecnico_id || formData.tecnicoAsignadoId || formData.tecnico_asignado_id;
     if (techId) {
-      const match = tecnicosList.find(t => String(t.id) === String(techId));
+      const match = tecnicosList.find(t => 
+        String(t.id) === String(techId) || 
+        (t.legacy_id && String(t.legacy_id) === String(techId)) ||
+        (String(techId).includes('ramiro') && t.nombre_completo.includes('Ramiro'))
+      );
       if (match) return match;
     }
     const techName = formData.tecnicoNombre || formData.tecnico_nombre_manual;
@@ -135,7 +139,7 @@ export default function Step4ReportPreview({
     }
     const ramiro = tecnicosList.find(t => t.nombre_completo.includes('Ramiro'));
     return ramiro || { nombre_completo: 'Ramiro Condori', cargo: 'Técnico Especialista RF' };
-  }, [formData.usuario_tecnico_id, formData.tecnicoAsignadoId, formData.tecnicoNombre, formData.tecnico_nombre_manual, currentUser, tecnicosList]);
+  }, [formData.usuario_tecnico_id, formData.tecnicoAsignadoId, formData.tecnico_asignado_id, formData.tecnicoNombre, formData.tecnico_nombre_manual, currentUser, tecnicosList]);
 
   const tecnicoFirmanteNombre = condiciones.tecnicoFirmanteNombre || tecnicoAsignado?.nombre_completo || 'Ramiro Condori';
   const tecnicoFirmanteCargo = condiciones.tecnicoFirmanteCargo || tecnicoAsignado?.cargo || 'Técnico Especialista RF';
@@ -231,8 +235,11 @@ export default function Step4ReportPreview({
 
   // Fotos divididas en Recepción y Diagnóstico para Sección 7
   const fotosRecepcion = useMemo(() => {
-    return (formData.equipos || []).flatMap((eq, eqIdx) =>
-      (eq.imagenes || []).map((img, i) => {
+    return (formData.equipos || []).flatMap((eq, eqIdx) => {
+      const imgs = (Array.isArray(eq.imagenes) && eq.imagenes.length > 0)
+        ? eq.imagenes
+        : (Array.isArray(eq.imagenesRecepcion) && eq.imagenesRecepcion.length > 0 ? eq.imagenesRecepcion : []);
+      return imgs.map((img, i) => {
         const url = typeof img === 'string' ? img : (img?.url || '');
         return {
           ...img,
@@ -241,13 +248,16 @@ export default function Step4ReportPreview({
           serie: eq.serie || eq.numero_serie || 'S/N',
           etiqueta: img?.name || `Foto Exterior #${i + 1}`
         };
-      }).filter(f => Boolean(f.url))
-    );
+      }).filter(f => Boolean(f.url));
+    });
   }, [formData.equipos]);
 
   const fotosDiagnostico = useMemo(() => {
-    return (formData.equipos || []).flatMap((eq, eqIdx) =>
-      (eq.imagenesInternas || []).map((img, i) => {
+    return (formData.equipos || []).flatMap((eq, eqIdx) => {
+      const imgs = (Array.isArray(eq.imagenesInternas) && eq.imagenesInternas.length > 0)
+        ? eq.imagenesInternas
+        : (Array.isArray(eq.imagenesDiagnostico) && eq.imagenesDiagnostico.length > 0 ? eq.imagenesDiagnostico : []);
+      return imgs.map((img, i) => {
         const url = typeof img === 'string' ? img : (img?.url || '');
         return {
           ...img,
@@ -256,8 +266,8 @@ export default function Step4ReportPreview({
           serie: eq.serie || eq.numero_serie || 'S/N',
           etiqueta: img?.name || `Foto Placa / Laboratorio #${i + 1}`
         };
-      }).filter(f => Boolean(f.url))
-    );
+      }).filter(f => Boolean(f.url));
+    });
   }, [formData.equipos]);
 
   const tieneFotos = fotosRecepcion.length > 0 || fotosDiagnostico.length > 0;
@@ -489,6 +499,9 @@ export default function Step4ReportPreview({
                     tecnicoFirmanteNombre: selName,
                     tecnicoFirmanteCargo: match?.cargo || 'Técnico Especialista RF'
                   });
+                  if (match && formData.id) {
+                    OrdersService.assignTechnician(formData.id, match.id, selName).catch(() => {});
+                  }
                 }}
                 className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-gray-800 focus:outline-none focus:border-[#E30613] cursor-pointer"
               >

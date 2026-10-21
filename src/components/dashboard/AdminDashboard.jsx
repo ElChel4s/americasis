@@ -118,14 +118,20 @@ export default function AdminDashboard({ onNewOrder }) {
 
   const handleOpenAssignModal = (order) => {
     setAssignModalOrder(order);
-    setSelectedTechnicianId(order.usuario_tecnico_id || order.tecnico_asignado_id || '');
+    const currentTechId = order.usuario_tecnico_id || order.tecnico_asignado_id || order.tecnicoAsignadoId || '';
+    const matched = technicians.find(t => 
+      (currentTechId && (String(t.id) === String(currentTechId) || (t.legacy_id && String(t.legacy_id) === String(currentTechId)))) ||
+      (order.tecnico_nombre_manual && t.nombre_completo.toLowerCase() === order.tecnico_nombre_manual.toLowerCase()) ||
+      (order.tecnico_nombre && t.nombre_completo.toLowerCase() === order.tecnico_nombre.toLowerCase())
+    );
+    setSelectedTechnicianId(matched ? matched.id : currentTechId);
   };
 
   const handleConfirmAssign = async () => {
     if (!assignModalOrder) return;
     setIsAssigning(true);
     try {
-      const tech = technicians.find(t => String(t.id) === String(selectedTechnicianId));
+      const tech = technicians.find(t => String(t.id) === String(selectedTechnicianId) || (t.legacy_id && String(t.legacy_id) === String(selectedTechnicianId)));
       const techName = tech ? tech.nombre_completo : null;
       const updated = await OrdersService.assignTechnician(
         assignModalOrder.id,
@@ -390,10 +396,18 @@ export default function AdminDashboard({ onNewOrder }) {
                       <td className="py-3.5 px-4">
                         <div className="min-w-[170px] space-y-1">
                           <select
-                            value={ord.usuario_tecnico_id || ord.tecnico_asignado_id || ''}
+                            value={(() => {
+                              const currentTechId = ord.usuario_tecnico_id || ord.tecnico_asignado_id || ord.tecnicoAsignadoId || '';
+                              const matched = technicians.find(t => 
+                                (currentTechId && (String(t.id) === String(currentTechId) || (t.legacy_id && String(t.legacy_id) === String(currentTechId)))) ||
+                                (ord.tecnico_nombre_manual && t.nombre_completo.toLowerCase() === ord.tecnico_nombre_manual.toLowerCase()) ||
+                                (ord.tecnico_nombre && t.nombre_completo.toLowerCase() === ord.tecnico_nombre.toLowerCase())
+                              );
+                              return matched ? matched.id : currentTechId;
+                            })()}
                             onChange={async (e) => {
                               const techId = e.target.value;
-                              const tech = technicians.find(t => String(t.id) === String(techId));
+                              const tech = technicians.find(t => String(t.id) === String(techId) || (t.legacy_id && String(t.legacy_id) === String(techId)));
                               const techName = tech ? tech.nombre_completo : null;
                               try {
                                 const updated = await OrdersService.assignTechnician(ord.id, techId || null, techName);

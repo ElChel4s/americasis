@@ -31,7 +31,8 @@ let mockUsers = [
     creado_en: '2026-02-01T10:00:00Z',
   },
   {
-    id: 'usr-ramiro-condori',
+    id: 'b0000000-0000-0000-0000-000000000005',
+    legacy_id: 'usr-ramiro-condori',
     sucursal_id: 'a0000000-0000-0000-0000-000000000001',
     nombre_completo: 'Ramiro Condori',
     email: 'tecnico1@americasis.com',
@@ -171,7 +172,7 @@ export const AuthRepository = {
       );
       return rows[0] || null;
     } catch (err) {
-      const found = mockUsers.find(u => String(u.id) === String(id));
+      const found = mockUsers.find(u => String(u.id) === String(id) || (u.legacy_id && String(u.legacy_id) === String(id)));
       return found ? { ...found } : null;
     }
   },

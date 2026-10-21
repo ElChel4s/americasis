@@ -670,8 +670,15 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
 
   // SECCIÓN 7: ANEXO FOTOGRÁFICO (SI HAY FOTOS)
   const todasFotos = (formData.equipos || []).flatMap((eq, eqIdx) => {
-    const ext = (eq.imagenes || []).map(img => ({ ...img, equipoLabel: eq.modelo || `Equipo ${eqIdx + 1}`, tipo: 'Recepción' }));
-    const int = (eq.imagenesInternas || []).map(img => ({ ...img, equipoLabel: eq.modelo || `Equipo ${eqIdx + 1}`, tipo: 'Diagnóstico' }));
+    const extImgs = (Array.isArray(eq.imagenes) && eq.imagenes.length > 0)
+      ? eq.imagenes
+      : (Array.isArray(eq.imagenesRecepcion) && eq.imagenesRecepcion.length > 0 ? eq.imagenesRecepcion : []);
+    const intImgs = (Array.isArray(eq.imagenesInternas) && eq.imagenesInternas.length > 0)
+      ? eq.imagenesInternas
+      : (Array.isArray(eq.imagenesDiagnostico) && eq.imagenesDiagnostico.length > 0 ? eq.imagenesDiagnostico : []);
+
+    const ext = extImgs.map(img => ({ ...img, equipoLabel: eq.modelo || `Equipo ${eqIdx + 1}`, tipo: 'Recepción' }));
+    const int = intImgs.map(img => ({ ...img, equipoLabel: eq.modelo || `Equipo ${eqIdx + 1}`, tipo: 'Diagnóstico' }));
     return [...ext, ...int];
   });
 

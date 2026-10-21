@@ -23,7 +23,8 @@ export const DEFAULT_USERS = [
     cargo: 'Gerencia General'
   },
   {
-    id: 'usr-ramiro-condori',
+    id: 'b0000000-0000-0000-0000-000000000005',
+    legacy_id: 'usr-ramiro-condori',
     nombre_completo: 'Ramiro Condori',
     email: 'tecnico1@americasis.com',
     username: 'tecnico1',
@@ -109,7 +110,8 @@ export const UsersService = {
       const ramiroNorm = normalizeEmail('tecnico1@americasis.com');
       if (!map.has(ramiroNorm) || map.get(ramiroNorm).rol !== 'TECNICO') {
         map.set(ramiroNorm, {
-          id: 'usr-ramiro-condori',
+          id: 'b0000000-0000-0000-0000-000000000005',
+          legacy_id: 'usr-ramiro-condori',
           nombre_completo: 'Ramiro Condori',
           email: 'tecnico1@americasis.com',
           username: 'tecnico1',
@@ -156,7 +158,8 @@ export const UsersService = {
     const ramiroNorm = normalizeEmail('tecnico1@americasis.com');
     if (!map.has(ramiroNorm)) {
       map.set(ramiroNorm, {
-        id: 'usr-ramiro-condori',
+        id: 'b0000000-0000-0000-0000-000000000005',
+        legacy_id: 'usr-ramiro-condori',
         nombre_completo: 'Ramiro Condori',
         email: 'tecnico1@americasis.com',
         username: 'tecnico1',

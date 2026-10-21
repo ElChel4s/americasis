@@ -54,10 +54,18 @@ function formatEquiposForStep1(equipos) {
       accesorios: eq.accesorios || [],
       fallas: eq.fallas || [],
       repuestos: eq.repuestos || [],
-      imagenes: eq.imagenes || eq.imagenesRecepcion || [],
-      imagenesRecepcion: eq.imagenesRecepcion || eq.imagenes || [],
-      imagenesInternas: eq.imagenesInternas || eq.imagenesDiagnostico || [],
-      imagenesDiagnostico: eq.imagenesDiagnostico || eq.imagenesInternas || [],
+      imagenes: (Array.isArray(eq.imagenes) && eq.imagenes.length > 0)
+        ? eq.imagenes
+        : (Array.isArray(eq.imagenesRecepcion) && eq.imagenesRecepcion.length > 0 ? eq.imagenesRecepcion : []),
+      imagenesRecepcion: (Array.isArray(eq.imagenesRecepcion) && eq.imagenesRecepcion.length > 0)
+        ? eq.imagenesRecepcion
+        : (Array.isArray(eq.imagenes) && eq.imagenes.length > 0 ? eq.imagenes : []),
+      imagenesInternas: (Array.isArray(eq.imagenesInternas) && eq.imagenesInternas.length > 0)
+        ? eq.imagenesInternas
+        : (Array.isArray(eq.imagenesDiagnostico) && eq.imagenesDiagnostico.length > 0 ? eq.imagenesDiagnostico : []),
+      imagenesDiagnostico: (Array.isArray(eq.imagenesDiagnostico) && eq.imagenesDiagnostico.length > 0)
+        ? eq.imagenesDiagnostico
+        : (Array.isArray(eq.imagenesInternas) && eq.imagenesInternas.length > 0 ? eq.imagenesInternas : []),
       antenaEstado: eq.antena_estado || eq.antenaEstado || 'OPERATIVA',
       antenaModelo: eq.antena_modelo_sugerido || eq.antenaModelo || '',
       bateriaModelo: eq.bateria_modelo || eq.bateriaModelo || '',
@@ -122,8 +130,9 @@ function EditarRecepcionContent() {
               cliente_direccion: data.cliente_direccion || data.direccion || '',
               persona_contacto: data.persona_contacto || '',
               moneda: data.moneda || 'BOB',
-              usuario_tecnico_id: data.usuario_tecnico_id || data.tecnicoAsignadoId || '',
-              tecnicoAsignadoId: data.usuario_tecnico_id || data.tecnicoAsignadoId || '',
+              usuario_tecnico_id: data.usuario_tecnico_id || data.tecnicoAsignadoId || data.tecnico_asignado_id || '',
+              tecnicoAsignadoId: data.usuario_tecnico_id || data.tecnicoAsignadoId || data.tecnico_asignado_id || '',
+              tecnico_asignado_id: data.usuario_tecnico_id || data.tecnicoAsignadoId || data.tecnico_asignado_id || '',
               tecnico_nombre_manual: data.tecnico_nombre_manual || data.tecnicoNombre || '',
               tecnicoNombre: data.tecnico_nombre_manual || data.tecnicoNombre || '',
               recepcionista_nombre_manual: data.recepcionista_nombre_manual || '',

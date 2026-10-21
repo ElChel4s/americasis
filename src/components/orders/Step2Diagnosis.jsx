@@ -184,7 +184,13 @@ export default function Step2Diagnosis({
 
   // 4. Modal de Código QR para Fotos con Celular y Galería
   const [showQrModal, setShowQrModal] = useState(false);
-  const [imagenesInternas, setImagenesInternas] = useState(equipo.imagenesInternas || []);
+  const [imagenesInternas, setImagenesInternas] = useState(
+    (Array.isArray(equipo.imagenesInternas) && equipo.imagenesInternas.length > 0)
+      ? equipo.imagenesInternas
+      : (Array.isArray(equipo.imagenesDiagnostico) && equipo.imagenesDiagnostico.length > 0
+          ? equipo.imagenesDiagnostico
+          : [])
+  );
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [cropModalOpen, setCropModalOpen] = useState(false);
   const [cropImageSrc, setCropImageSrc] = useState(null);

@@ -117,19 +117,142 @@ const safeSaveLocalStorage = (orders) => {
  */
 const rehydrateOrder = (order) => {
   if (!order) return order;
-  const orderKey = String(order.id || order.numero_orden || '');
-  if (!orderKey || !inMemoryOrderImages.has(orderKey)) return order;
+  const orderKey1 = String(order.id || '');
+  const orderKey2 = String(order.numero_orden || '');
+  const cachedImages = inMemoryOrderImages.get(orderKey1) || inMemoryOrderImages.get(orderKey2);
 
-  const cachedImages = inMemoryOrderImages.get(orderKey);
   const equipos = (order.equipos || []).map((eq, idx) => {
-    const cachedEntry = cachedImages.find(c => c.equipoIndex === idx);
-    if (cachedEntry && Array.isArray(cachedEntry.imagenes) && cachedEntry.imagenes.length > 0) {
-      return { ...eq, imagenes: cachedEntry.imagenes };
+    let imagenes = (Array.isArray(eq.imagenes) && eq.imagenes.length > 0)
+      ? eq.imagenes
+      : (Array.isArray(eq.imagenesRecepcion) && eq.imagenesRecepcion.length > 0 ? eq.imagenesRecepcion : []);
+
+    let imagenesInternas = (Array.isArray(eq.imagenesInternas) && eq.imagenesInternas.length > 0)
+      ? eq.imagenesInternas
+      : (Array.isArray(eq.imagenesDiagnostico) && eq.imagenesDiagnostico.length > 0 ? eq.imagenesDiagnostico : []);
+
+    if (cachedImages) {
+      const cachedEntry = cachedImages.find(c => c.equipoIndex === idx);
+      if (cachedEntry) {
+        if (Array.isArray(cachedEntry.imagenes) && cachedEntry.imagenes.length > 0 && imagenes.length === 0) {
+          imagenes = cachedEntry.imagenes;
+        }
+        if (Array.isArray(cachedEntry.imagenesInternas) && cachedEntry.imagenesInternas.length > 0 && imagenesInternas.length === 0) {
+          imagenesInternas = cachedEntry.imagenesInternas;
+        }
+      }
     }
-    return eq;
+
+    return {
+      ...eq,
+      imagenes,
+      imagenesRecepcion: imagenes,
+      imagenesInternas,
+      imagenesDiagnostico: imagenesInternas
+    };
   });
 
   return { ...order, equipos };
+};
+
+/**
+ * Fusión inteligente de una orden del servidor con la versión local,
+ * preservando estrictamente las imágenes de recepción y diagnóstico de cada equipo,
+ * y sincronizando la asignación de técnico y firmas del informe.
+ */
+const mergeOrderPreservingPhotos = (serverOrder, localOrder) => {
+  if (!serverOrder) return localOrder ? rehydrateOrder(localOrder) : null;
+  if (!localOrder) return rehydrateOrder(serverOrder);
+
+  // Sincronizar datos del técnico (priorizar la asignación local más reciente si difiere)
+  const resolvedTecnicoId = localOrder.usuario_tecnico_id || localOrder.tecnico_asignado_id || localOrder.tecnicoAsignadoId || serverOrder.usuario_tecnico_id || serverOrder.tecnico_asignado_id || null;
+  const resolvedTecnicoNombre = localOrder.tecnico_nombre_manual || localOrder.tecnicoNombre || serverOrder.tecnico_nombre_manual || serverOrder.tecnicoNombre || null;
+
+  // Condiciones comerciales y firma de informe en Fase 4
+  const mergedCondiciones = {
+    ...(serverOrder.condiciones || serverOrder.condiciones_comerciales_json || {}),
+    ...(localOrder.condiciones || localOrder.condiciones_comerciales_json || {})
+  };
+  if (resolvedTecnicoNombre && !mergedCondiciones.tecnicoFirmanteNombre) {
+    mergedCondiciones.tecnicoFirmanteNombre = resolvedTecnicoNombre;
+  }
+
+  // Mapear equipos preservando fotos de recepción y de diagnóstico
+  const localEquipos = localOrder.equipos || [];
+  const serverEquipos = serverOrder.equipos || [];
+
+  const mergedEquipos = (serverEquipos.length > 0 ? serverEquipos : localEquipos).map((sEq, idx) => {
+    // Buscar equipo correspondiente en el almacén local
+    const lEq = localEquipos.find(e => 
+      (sEq.id && String(e.id) === String(sEq.id)) ||
+      (sEq.tempId && String(e.tempId) === String(sEq.tempId)) ||
+      (sEq.numero_serie && e.numero_serie && String(e.numero_serie).toUpperCase() === String(sEq.numero_serie).toUpperCase()) ||
+      (sEq.serie && e.serie && String(e.serie).toUpperCase() === String(sEq.serie).toUpperCase())
+    ) || localEquipos[idx] || {};
+
+    // 1. Fotos de recepción (exterior)
+    const sImgs = (Array.isArray(sEq.imagenes) && sEq.imagenes.length > 0)
+      ? sEq.imagenes
+      : (Array.isArray(sEq.imagenesRecepcion) && sEq.imagenesRecepcion.length > 0 ? sEq.imagenesRecepcion : []);
+
+    const lImgs = (Array.isArray(lEq.imagenes) && lEq.imagenes.length > 0)
+      ? lEq.imagenes
+      : (Array.isArray(lEq.imagenesRecepcion) && lEq.imagenesRecepcion.length > 0 ? lEq.imagenesRecepcion : []);
+
+    const finalImgs = (sImgs.length > 0 && !sImgs.every(img => !img.url || img.url === '')) ? sImgs : lImgs;
+
+    // 2. Fotos de diagnóstico (interior / laboratorio)
+    const sImgsInt = (Array.isArray(sEq.imagenesInternas) && sEq.imagenesInternas.length > 0)
+      ? sEq.imagenesInternas
+      : (Array.isArray(sEq.imagenesDiagnostico) && sEq.imagenesDiagnostico.length > 0 ? sEq.imagenesDiagnostico : []);
+
+    const lImgsInt = (Array.isArray(lEq.imagenesInternas) && lEq.imagenesInternas.length > 0)
+      ? lEq.imagenesInternas
+      : (Array.isArray(lEq.imagenesDiagnostico) && lEq.imagenesDiagnostico.length > 0 ? lEq.imagenesDiagnostico : []);
+
+    const finalImgsInt = (sImgsInt.length > 0 && !sImgsInt.every(img => !img.url || img.url === '')) ? sImgsInt : lImgsInt;
+
+    // 3. Accesorios de recepción
+    const accObj = (sEq.accesoriosRecepcion && Object.keys(sEq.accesoriosRecepcion).length > 0)
+      ? sEq.accesoriosRecepcion
+      : (lEq.accesoriosRecepcion || {});
+
+    return {
+      ...lEq,
+      ...sEq,
+      id: sEq.id || lEq.id || `eq-${idx + 1}`,
+      tempId: sEq.tempId || lEq.tempId || sEq.id || lEq.id,
+      orden_indice: sEq.orden_indice || lEq.orden_indice || (idx + 1),
+      accesoriosRecepcion: accObj,
+      imagenes: finalImgs,
+      imagenesRecepcion: finalImgs,
+      imagenesInternas: finalImgsInt,
+      imagenesDiagnostico: finalImgsInt
+    };
+  });
+
+  const merged = {
+    ...localOrder,
+    ...serverOrder,
+    usuario_tecnico_id: resolvedTecnicoId,
+    tecnico_asignado_id: resolvedTecnicoId,
+    tecnicoAsignadoId: resolvedTecnicoId,
+    tecnico_nombre_manual: resolvedTecnicoNombre,
+    tecnicoNombre: resolvedTecnicoNombre,
+    condiciones: mergedCondiciones,
+    condiciones_comerciales_json: mergedCondiciones,
+    equipos: mergedEquipos
+  };
+
+  // Guardar en memoria RAM de la sesión
+  const memoryImages = mergedEquipos.map((eq, idx) => ({
+    equipoIndex: idx,
+    imagenes: eq.imagenes || [],
+    imagenesInternas: eq.imagenesInternas || []
+  }));
+  if (merged.id) inMemoryOrderImages.set(String(merged.id), memoryImages);
+  if (merged.numero_orden) inMemoryOrderImages.set(String(merged.numero_orden), memoryImages);
+
+  return rehydrateOrder(merged);
 };
 
 /**
@@ -147,7 +270,7 @@ const broadcastOrdersUpdate = (order) => {
 export const OrdersService = {
   /**
    * Obtiene todas las órdenes, combinando el almacenamiento local con el backend
-   * de forma segura (sin sobreescrituras que borren las órdenes locales).
+   * de forma segura (sin sobreescrituras que borren las imágenes locales).
    */
   getOrders: async () => {
     if (typeof window === 'undefined') return [];
@@ -161,28 +284,22 @@ export const OrdersService = {
       if (res.ok) {
         const result = await res.json();
         if (result.success && Array.isArray(result.data) && result.data.length > 0) {
-          // Fusión inteligente: mantener órdenes locales no sincronizadas y actualizar las existentes
-          const serverMap = new Map();
-          result.data.forEach(so => {
-            const key = String(so.id || so.numero_orden);
-            serverMap.set(key, so);
-          });
-
           const merged = [];
           const seenKeys = new Set();
 
-          // Las órdenes del servidor son la fuente de verdad primaria
+          // Fusión inteligente: las órdenes de servidor se enriquecen con las fotos y datos locales
           for (const so of result.data) {
             const key = String(so.id || so.numero_orden);
             seenKeys.add(key);
-            merged.push(so);
+            const lo = orders.find(o => String(o.id) === key || String(o.numero_orden) === key);
+            merged.push(mergeOrderPreservingPhotos(so, lo));
           }
 
           // Añadir órdenes locales que aún no hayan sido sincronizadas
           for (const lo of orders) {
             const key = String(lo.id || lo.numero_orden);
             if (!seenKeys.has(key)) {
-              merged.push(lo);
+              merged.push(rehydrateOrder(lo));
               // Si tiene un ID temporal, subirla silenciosamente a Supabase en segundo plano
               if (String(lo.id).length < 25 || !String(lo.id).includes('-')) {
                 OrdersService.syncLocalOrderToServer(lo).catch(() => {});
@@ -219,15 +336,18 @@ export const OrdersService = {
       if (res.ok) {
         const result = await res.json();
         if (result.success && result.data) {
-          const rehydrated = rehydrateOrder(result.data);
-          // Actualizar caché local con la versión completa y fresca de Supabase
           const orders = getStoredLocalOrders();
           const idx = orders.findIndex(o => String(o.id) === String(id) || String(o.numero_orden) === String(id));
+          const existing = idx >= 0 ? orders[idx] : null;
+          const merged = mergeOrderPreservingPhotos(result.data, existing);
+
           if (idx >= 0) {
-            orders[idx] = rehydrated;
-            safeSaveLocalStorage(orders);
+            orders[idx] = merged;
+          } else {
+            orders.unshift(merged);
           }
-          return rehydrated;
+          safeSaveLocalStorage(orders);
+          return merged;
         }
       }
     } catch (e) {
@@ -311,6 +431,10 @@ export const OrdersService = {
     const orderId = String(data.id || Date.now());
     const numeroOrden = data.numero_orden || data.ordenServicio || `OS-${String(Math.floor(Math.random() * 90000) + 10000)}`;
 
+    const techId = data.usuario_tecnico_id || data.tecnicoAsignadoId || data.tecnico_asignado_id || null;
+    const techName = data.tecnico_nombre_manual || data.tecnicoNombre || null;
+    const prevCond = data.condiciones || data.condiciones_comerciales_json || {};
+
     const nuevaOrden = {
       ...data,
       id: orderId,
@@ -318,6 +442,19 @@ export const OrdersService = {
       ordenServicio: numeroOrden,
       razon_social: data.razon_social || data.cliente || 'Consumidor Final',
       cliente: data.cliente || data.razon_social || 'Consumidor Final',
+      usuario_tecnico_id: techId,
+      tecnico_asignado_id: techId,
+      tecnicoAsignadoId: techId,
+      tecnico_nombre_manual: techName,
+      tecnicoNombre: techName,
+      condiciones: {
+        ...prevCond,
+        tecnicoFirmanteNombre: techName || prevCond.tecnicoFirmanteNombre
+      },
+      condiciones_comerciales_json: {
+        ...prevCond,
+        tecnicoFirmanteNombre: techName || prevCond.tecnicoFirmanteNombre
+      },
       estado: data.estado || 'RECIBIDO',
       estado_global: data.estado || 'RECIBIDO',
       total_equipos: sanitizedEquipos.length,
@@ -329,7 +466,8 @@ export const OrdersService = {
     // 3. Respaldar fotos completas en la memoria RAM de la sesión
     const memoryImages = sanitizedEquipos.map((eq, idx) => ({
       equipoIndex: idx,
-      imagenes: eq.imagenes
+      imagenes: eq.imagenes || [],
+      imagenesInternas: eq.imagenesInternas || []
     }));
     inMemoryOrderImages.set(String(nuevaOrden.id), memoryImages);
     inMemoryOrderImages.set(String(nuevaOrden.numero_orden), memoryImages);
@@ -526,13 +664,52 @@ export const OrdersService = {
       throw err;
     }
 
-    const orders = await OrdersService.getOrders();
+    const orders = getStoredLocalOrders();
     const index = orders.findIndex(o => String(o.id) === String(id) || String(o.numero_orden) === String(id));
     if (index >= 0) {
-      orders[index].equipos = equipos;
+      const existingEquipos = orders[index].equipos || [];
+      const updatedEquipos = (equipos || []).map((eq, i) => {
+        const prev = existingEquipos.find(e => 
+          (eq.id && String(e.id) === String(eq.id)) ||
+          (eq.tempId && String(e.tempId) === String(eq.tempId))
+        ) || existingEquipos[i] || {};
+
+        const imgs = (Array.isArray(eq.imagenes) && eq.imagenes.length > 0)
+          ? eq.imagenes
+          : (Array.isArray(eq.imagenesRecepcion) && eq.imagenesRecepcion.length > 0
+              ? eq.imagenesRecepcion
+              : (Array.isArray(prev.imagenes) && prev.imagenes.length > 0 ? prev.imagenes : (prev.imagenesRecepcion || [])));
+
+        const imgsInt = (Array.isArray(eq.imagenesInternas) && eq.imagenesInternas.length > 0)
+          ? eq.imagenesInternas
+          : (Array.isArray(eq.imagenesDiagnostico) && eq.imagenesDiagnostico.length > 0
+              ? eq.imagenesDiagnostico
+              : (Array.isArray(prev.imagenesInternas) && prev.imagenesInternas.length > 0 ? prev.imagenesInternas : (prev.imagenesDiagnostico || [])));
+
+        return {
+          ...prev,
+          ...eq,
+          imagenes: imgs,
+          imagenesRecepcion: imgs,
+          imagenesInternas: imgsInt,
+          imagenesDiagnostico: imgsInt
+        };
+      });
+
+      orders[index].equipos = updatedEquipos;
       orders[index].estado = newStatus;
       orders[index].estado_global = newStatus;
       orders[index].updatedAt = new Date().toISOString();
+
+      // Guardar en RAM de sesión
+      const memoryImages = updatedEquipos.map((eq, idx) => ({
+        equipoIndex: idx,
+        imagenes: eq.imagenes || [],
+        imagenesInternas: eq.imagenesInternas || []
+      }));
+      if (orders[index].id) inMemoryOrderImages.set(String(orders[index].id), memoryImages);
+      if (orders[index].numero_orden) inMemoryOrderImages.set(String(orders[index].numero_orden), memoryImages);
+
       safeSaveLocalStorage(orders);
       broadcastOrdersUpdate(orders[index]);
       return rehydrateOrder(orders[index]);
@@ -582,7 +759,18 @@ export const OrdersService = {
   updateReception: async (orderId, receptionData) => {
     if (typeof window === 'undefined') return null;
 
+    const orders = getStoredLocalOrders();
+    const index = orders.findIndex(o => String(o.id) === String(orderId) || String(o.numero_orden) === String(orderId));
+    const currentOrder = index >= 0 ? orders[index] : null;
+
     const sanitizedEquipos = (receptionData.equipos || []).map((eq, i) => {
+      const prev = (currentOrder?.equipos || []).find(e => 
+        (eq.id && String(e.id) === String(eq.id)) || 
+        (eq.tempId && String(e.tempId) === String(eq.tempId)) ||
+        (eq.numero_serie && e.numero_serie && String(e.numero_serie).toUpperCase() === String(eq.numero_serie).toUpperCase()) ||
+        (eq.serie && e.serie && String(e.serie).toUpperCase() === String(eq.serie).toUpperCase())
+      ) || currentOrder?.equipos?.[i] || {};
+
       const accs = Array.isArray(eq.accesorios) && eq.accesorios.length > 0
         ? eq.accesorios
         : Object.entries(eq.accesoriosRecepcion || {}).map(([nombre, presencia]) => ({
@@ -596,18 +784,51 @@ export const OrdersService = {
             otros_descripcion: eq.otrosDescripcion || null
           }));
 
+      // Fotos de recepción (exterior)
+      const imgs = (Array.isArray(eq.imagenes) && eq.imagenes.length > 0)
+        ? eq.imagenes
+        : (Array.isArray(eq.imagenesRecepcion) && eq.imagenesRecepcion.length > 0
+            ? eq.imagenesRecepcion
+            : (Array.isArray(prev.imagenes) && prev.imagenes.length > 0
+                ? prev.imagenes
+                : (prev.imagenesRecepcion || [])));
+
+      // Fotos de diagnóstico (interior / laboratorio)
+      const imgsInt = (Array.isArray(eq.imagenesInternas) && eq.imagenesInternas.length > 0)
+        ? eq.imagenesInternas
+        : (Array.isArray(eq.imagenesDiagnostico) && eq.imagenesDiagnostico.length > 0
+            ? eq.imagenesDiagnostico
+            : (Array.isArray(prev.imagenesInternas) && prev.imagenesInternas.length > 0
+                ? prev.imagenesInternas
+                : (prev.imagenesDiagnostico || [])));
+
       return {
+        ...prev,
         ...eq,
+        id: eq.id || prev.id || `eq-${Date.now()}-${i}`,
+        tempId: eq.tempId || prev.tempId || eq.id || prev.id,
         orden_indice: i + 1,
-        marca: eq.marca || 'Motorola',
-        modelo: eq.modelo || '',
-        numero_serie: (eq.serie || eq.numero_serie || `SER-${Date.now()}-${i}`).toUpperCase().trim(),
-        serie: (eq.serie || eq.numero_serie || `SER-${Date.now()}-${i}`).toUpperCase().trim(),
-        banda: eq.banda || 'VHF',
-        falla_declarada_cliente: eq.falla_declarada_cliente || '',
-        accesorios: accs
+        marca: eq.marca || prev.marca || 'Motorola',
+        modelo: eq.modelo || prev.modelo || '',
+        numero_serie: (eq.serie || eq.numero_serie || prev.numero_serie || `SER-${Date.now()}-${i}`).toUpperCase().trim(),
+        serie: (eq.serie || eq.numero_serie || prev.serie || `SER-${Date.now()}-${i}`).toUpperCase().trim(),
+        banda: eq.banda || prev.banda || 'VHF',
+        falla_declarada_cliente: eq.falla_declarada_cliente || prev.falla_declarada_cliente || '',
+        costo_servicio: eq.costo_servicio !== undefined ? eq.costo_servicio : (prev.costo_servicio !== undefined ? prev.costo_servicio : 150),
+        descripcion_servicio: eq.descripcion_servicio || prev.descripcion_servicio || 'Mantenimiento preventivo y calibración RF',
+        accesorios: accs,
+        accesoriosRecepcion: (eq.accesoriosRecepcion && Object.keys(eq.accesoriosRecepcion).length > 0) ? eq.accesoriosRecepcion : (prev.accesoriosRecepcion || {}),
+        fallas: eq.fallas || prev.fallas || [],
+        repuestos: eq.repuestos || prev.repuestos || [],
+        imagenes: imgs,
+        imagenesRecepcion: imgs,
+        imagenesInternas: imgsInt,
+        imagenesDiagnostico: imgsInt
       };
     });
+
+    const techId = receptionData.usuario_tecnico_id || receptionData.tecnicoAsignadoId || receptionData.tecnico_asignado_id || currentOrder?.usuario_tecnico_id || currentOrder?.tecnicoAsignadoId || null;
+    const techName = receptionData.tecnico_nombre_manual || receptionData.tecnicoNombre || currentOrder?.tecnico_nombre_manual || currentOrder?.tecnicoNombre || null;
 
     const payload = {
       reception: {
@@ -623,8 +844,11 @@ export const OrdersService = {
         cliente_direccion: receptionData.cliente_direccion || receptionData.direccion || '',
         persona_contacto: receptionData.persona_contacto || '',
         moneda: receptionData.moneda || 'BOB',
-        usuario_tecnico_id: receptionData.usuario_tecnico_id || receptionData.tecnicoAsignadoId || null,
-        tecnico_nombre_manual: receptionData.tecnico_nombre_manual || receptionData.tecnicoNombre || null,
+        usuario_tecnico_id: techId,
+        tecnico_asignado_id: techId,
+        tecnicoAsignadoId: techId,
+        tecnico_nombre_manual: techName,
+        tecnicoNombre: techName,
         recepcionista_nombre_manual: receptionData.recepcionista_nombre_manual || null,
         notas_internas: receptionData.notas_internas || null,
         numero_orden: receptionData.numero_orden || receptionData.ordenServicio || null,
@@ -632,51 +856,57 @@ export const OrdersService = {
       }
     };
 
-    const res = await fetch(`/api/orders/${orderId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.message || 'Error al actualizar recepción');
-    }
-
-    const orders = await OrdersService.getOrders();
-    const index = orders.findIndex(o => String(o.id) === String(orderId) || String(o.numero_orden) === String(orderId));
+    // Actualización inmediata en localStorage para máxima responsividad
+    let updatedLocalOrder = null;
     if (index >= 0) {
+      const prevCond = currentOrder?.condiciones || currentOrder?.condiciones_comerciales_json || {};
       orders[index] = {
         ...orders[index],
         ...payload.reception,
+        usuario_tecnico_id: techId,
+        tecnico_asignado_id: techId,
+        tecnicoAsignadoId: techId,
+        tecnico_nombre_manual: techName,
+        tecnicoNombre: techName,
         total_equipos: sanitizedEquipos.length,
-        equipos: sanitizedEquipos.map((eq, idx) => {
-          const prev = (orders[index].equipos || []).find(e => 
-            (eq.id && String(e.id) === String(eq.id)) || 
-            (eq.tempId && String(e.tempId) === String(eq.tempId))
-          ) || orders[index].equipos?.[idx] || {};
-          return {
-            ...prev,
-            ...eq,
-            id: eq.id || prev.id || `eq-${Date.now()}-${idx}`,
-            tempId: eq.tempId || prev.tempId || eq.id || prev.id,
-            orden_indice: idx + 1,
-            fallas: eq.fallas || prev.fallas || [],
-            repuestos: eq.repuestos || prev.repuestos || [],
-            imagenes: eq.imagenes || prev.imagenes || [],
-            imagenesRecepcion: eq.imagenesRecepcion || eq.imagenes || prev.imagenesRecepcion || prev.imagenes || [],
-            imagenesInternas: eq.imagenesInternas || prev.imagenesInternas || [],
-            imagenesDiagnostico: eq.imagenesDiagnostico || eq.imagenesInternas || prev.imagenesDiagnostico || prev.imagenesInternas || []
-          };
-        }),
+        equipos: sanitizedEquipos,
+        condiciones: {
+          ...prevCond,
+          tecnicoFirmanteNombre: techName || prevCond.tecnicoFirmanteNombre
+        },
+        condiciones_comerciales_json: {
+          ...prevCond,
+          tecnicoFirmanteNombre: techName || prevCond.tecnicoFirmanteNombre
+        },
         updatedAt: new Date().toISOString()
       };
+
+      // Guardar en RAM de la sesión
+      const memoryImages = sanitizedEquipos.map((eq, idx) => ({
+        equipoIndex: idx,
+        imagenes: eq.imagenes || [],
+        imagenesInternas: eq.imagenesInternas || []
+      }));
+      if (orders[index].id) inMemoryOrderImages.set(String(orders[index].id), memoryImages);
+      if (orders[index].numero_orden) inMemoryOrderImages.set(String(orders[index].numero_orden), memoryImages);
+
       safeSaveLocalStorage(orders);
-      broadcastOrdersUpdate(orders[index]);
-      return rehydrateOrder(orders[index]);
+      updatedLocalOrder = rehydrateOrder(orders[index]);
+      broadcastOrdersUpdate(updatedLocalOrder);
     }
 
-    return null;
+    // Persistir en backend central en segundo plano
+    try {
+      await fetch(`/api/orders/${orderId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } catch (netErr) {
+      console.warn('[OrdersService] Error de red en updateReception (persistido localmente):', netErr);
+    }
+
+    return updatedLocalOrder || rehydrateOrder(currentOrder);
   },
 
   /**
@@ -724,6 +954,46 @@ export const OrdersService = {
   assignTechnician: async (orderId, technicianId, technicianName) => {
     if (typeof window === 'undefined') return null;
 
+    // 1. Actualizar inmediatamente en el almacenamiento local y emitir evento
+    const orders = getStoredLocalOrders();
+    const index = orders.findIndex(o => String(o.id) === String(orderId) || String(o.numero_orden) === String(orderId));
+    let updatedOrder = null;
+
+    if (index >= 0) {
+      const cur = orders[index];
+      const prevCond = cur.condiciones || cur.condiciones_comerciales_json || {};
+      orders[index] = {
+        ...cur,
+        usuario_tecnico_id: technicianId,
+        tecnico_asignado_id: technicianId,
+        tecnicoAsignadoId: technicianId,
+        tecnico_nombre_manual: technicianName,
+        tecnicoNombre: technicianName,
+        solicitud_edicion_estado: 'APROBADA',
+        solicitud_edicion_tecnico_id: null,
+        solicitud_edicion_tecnico_nombre: null,
+        condiciones: {
+          ...prevCond,
+          tecnicoFirmanteNombre: technicianName || prevCond.tecnicoFirmanteNombre
+        },
+        condiciones_comerciales_json: {
+          ...prevCond,
+          tecnicoFirmanteNombre: technicianName || prevCond.tecnicoFirmanteNombre,
+          solicitud_edicion: {
+            tecnico_id: technicianId,
+            tecnico_nombre: technicianName,
+            estado: 'APROBADA',
+            fecha_aprobacion: new Date().toISOString()
+          }
+        },
+        updatedAt: new Date().toISOString()
+      };
+      safeSaveLocalStorage(orders);
+      updatedOrder = rehydrateOrder(orders[index]);
+      broadcastOrdersUpdate(updatedOrder);
+    }
+
+    // 2. Persistir en backend central en segundo plano
     try {
       await fetch(`/api/orders/${orderId}`, {
         method: 'PUT',
@@ -741,23 +1011,11 @@ export const OrdersService = {
           }
         })
       });
-    } catch (e) {}
-
-    const orders = await OrdersService.getOrders();
-    const index = orders.findIndex(o => String(o.id) === String(orderId) || String(o.numero_orden) === String(orderId));
-    if (index >= 0) {
-      orders[index].usuario_tecnico_id = technicianId;
-      orders[index].tecnico_asignado_id = technicianId;
-      orders[index].tecnico_nombre_manual = technicianName;
-      orders[index].solicitud_edicion_estado = 'APROBADA';
-      orders[index].solicitud_edicion_tecnico_id = null;
-      orders[index].solicitud_edicion_tecnico_nombre = null;
-      orders[index].updatedAt = new Date().toISOString();
-      safeSaveLocalStorage(orders);
-      broadcastOrdersUpdate(orders[index]);
-      return rehydrateOrder(orders[index]);
+    } catch (e) {
+      console.warn('[OrdersService] Error de red en assignTechnician (cambio persistido localmente):', e);
     }
-    return null;
+
+    return updatedOrder;
   },
 
   /**

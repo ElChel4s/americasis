@@ -2,6 +2,9 @@ import { pool, withTransaction, query } from '../../lib/config/database';
 import { supabase } from '../../lib/config/supabase-client';
 import { numeroALetras } from '../../lib/common/numero-a-letras';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const sanitizeUuid = (val) => (typeof val === 'string' && UUID_REGEX.test(val)) ? val : null;
+
 export const OrdersRepository = {
   /**
    * Crea una orden de servicio con todos sus equipos y accesorios.
@@ -50,7 +53,7 @@ export const OrdersRepository = {
         clienteId, 
         orderData.usuario_recepcion_id || null, 
         orderData.recepcionista_nombre_manual || 'Recepcionista Turno',
-        orderData.usuario_tecnico_id || null,
+        sanitizeUuid(orderData.usuario_tecnico_id),
         orderData.tecnico_nombre_manual || null,
         orderData.estado || 'BORRADOR', 
         orderData.moneda || 'BOB', 
@@ -204,7 +207,7 @@ export const OrdersRepository = {
         cliente_id: clienteId,
         numero_orden: numeroOrden,
         recepcionista_nombre_manual: orderData.recepcionista_nombre_manual || 'Recepción Mostrador',
-        usuario_tecnico_id: orderData.usuario_tecnico_id || null,
+        usuario_tecnico_id: sanitizeUuid(orderData.usuario_tecnico_id),
         tecnico_nombre_manual: orderData.tecnico_nombre_manual || null,
         estado: orderData.estado || 'RECIBIDO',
         moneda: orderData.moneda || 'BOB',
@@ -782,7 +785,7 @@ export const OrdersRepository = {
     if (updateData.notas_internas !== undefined) fieldsToUpdate.notas_internas = updateData.notas_internas;
     if (updateData.condiciones) fieldsToUpdate.condiciones_comerciales_json = updateData.condiciones;
     if (updateData.condiciones_comerciales_json) fieldsToUpdate.condiciones_comerciales_json = updateData.condiciones_comerciales_json;
-    if (updateData.usuario_tecnico_id !== undefined) fieldsToUpdate.usuario_tecnico_id = updateData.usuario_tecnico_id;
+    if (updateData.usuario_tecnico_id !== undefined) fieldsToUpdate.usuario_tecnico_id = sanitizeUuid(updateData.usuario_tecnico_id);
     if (updateData.tecnico_nombre_manual !== undefined) fieldsToUpdate.tecnico_nombre_manual = updateData.tecnico_nombre_manual;
     fieldsToUpdate.actualizado_en = new Date().toISOString();
 
@@ -821,7 +824,7 @@ export const OrdersRepository = {
         updateData.sumatoria_total !== undefined ? updateData.sumatoria_total : null,
         updateData.sumatoria_total !== undefined ? numeroALetras(updateData.sumatoria_total, updateData.moneda || 'BOB') : null,
         updateData.notas_internas || null,
-        updateData.usuario_tecnico_id || null,
+        sanitizeUuid(updateData.usuario_tecnico_id),
         updateData.tecnico_nombre_manual || null,
         orderId
       ]);
@@ -901,7 +904,7 @@ export const OrdersRepository = {
           orderUpdates.recepcionista_nombre_manual = receptionData.recepcionista_nombre_manual;
         }
         if (receptionData.usuario_tecnico_id !== undefined) {
-          orderUpdates.usuario_tecnico_id = receptionData.usuario_tecnico_id || null;
+          orderUpdates.usuario_tecnico_id = sanitizeUuid(receptionData.usuario_tecnico_id);
         }
         if (receptionData.tecnico_nombre_manual !== undefined) {
           orderUpdates.tecnico_nombre_manual = receptionData.tecnico_nombre_manual || null;
@@ -1067,7 +1070,7 @@ export const OrdersRepository = {
       `, [
         receptionData.moneda || null,
         receptionData.recepcionista_nombre_manual || null,
-        receptionData.usuario_tecnico_id || null,
+        sanitizeUuid(receptionData.usuario_tecnico_id),
         receptionData.tecnico_nombre_manual || null,
         receptionData.notas_internas || null,
         orderId

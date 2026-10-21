@@ -183,8 +183,19 @@ export default function TecnicoDiagnosticoMesaPage() {
   }
 
   const currentEquipo = order.equipos?.[activeEquipoIdx] || order.equipos?.[0] || {};
-  const accesoriosRecepcion = currentEquipo.accesoriosRecepcion || {};
-  const fotosRecepcion = currentEquipo.imagenes || [];
+  const accesoriosRecepcion = (currentEquipo.accesoriosRecepcion && Object.keys(currentEquipo.accesoriosRecepcion).length > 0)
+    ? currentEquipo.accesoriosRecepcion
+    : (Array.isArray(currentEquipo.accesorios)
+        ? currentEquipo.accesorios.reduce((acc, a) => {
+            if (a.accesorio_nombre) acc[a.accesorio_nombre] = a.presencia || 'CON';
+            return acc;
+          }, {})
+        : {});
+  const fotosRecepcion = (Array.isArray(currentEquipo.imagenes) && currentEquipo.imagenes.length > 0)
+    ? currentEquipo.imagenes
+    : (Array.isArray(currentEquipo.imagenesRecepcion) && currentEquipo.imagenesRecepcion.length > 0
+        ? currentEquipo.imagenesRecepcion
+        : []);
 
   return (
     <div className="space-y-6 pb-28 font-sans max-w-6xl mx-auto">

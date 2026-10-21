@@ -215,12 +215,21 @@ export default function Step1Reception({
             </label>
             <select
               className="input-field text-xs sm:text-sm font-semibold text-gray-800 bg-slate-50 border border-slate-300 focus:border-[#E30613] focus:bg-white cursor-pointer"
-              value={formData.usuario_tecnico_id || formData.tecnicoAsignadoId || ''}
+              value={(() => {
+                const currentTechId = formData.usuario_tecnico_id || formData.tecnicoAsignadoId || formData.tecnico_asignado_id || '';
+                const matched = technicians.find(t => 
+                  (currentTechId && (String(t.id) === String(currentTechId) || (t.legacy_id && String(t.legacy_id) === String(currentTechId)))) ||
+                  (formData.tecnico_nombre_manual && t.nombre_completo.toLowerCase() === formData.tecnico_nombre_manual.toLowerCase()) ||
+                  (formData.tecnicoNombre && t.nombre_completo.toLowerCase() === formData.tecnicoNombre.toLowerCase())
+                );
+                return matched ? matched.id : currentTechId;
+              })()}
               onChange={(e) => {
                 const techId = e.target.value;
-                const tech = technicians.find(t => String(t.id) === String(techId));
+                const tech = technicians.find(t => String(t.id) === String(techId) || (t.legacy_id && String(t.legacy_id) === String(techId)));
                 updateForm({
                   tecnicoAsignadoId: techId || null,
+                  tecnico_asignado_id: techId || null,
                   tecnicoNombre: tech ? tech.nombre_completo : null,
                   usuario_tecnico_id: techId || null,
                   tecnico_nombre_manual: tech ? tech.nombre_completo : null
