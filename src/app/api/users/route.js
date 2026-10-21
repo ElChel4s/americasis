@@ -6,12 +6,12 @@ import { features } from '@/lib/config/features';
 
 const createUserSchema = z.object({
   nombre_completo: z.string().min(3, 'El nombre completo debe tener al menos 3 caracteres'),
-  email: z.string().email('Debe proporcionar un correo electrónico válido'),
+  email: z.string().min(3, 'Debe proporcionar un usuario o correo electrónico'),
   password: z.string().min(6, 'La contraseña temporal debe tener al menos 6 caracteres'),
   rol: z.enum(['RECEPCION', 'TECNICO', 'ADMINISTRADOR'], {
     errorMap: () => ({ message: 'Rol inválido. Opciones: RECEPCION, TECNICO, ADMINISTRADOR' }),
   }),
-  sucursal_id: z.coerce.number().int().positive().default(1),
+  sucursal_id: z.any().optional().default('a0000000-0000-0000-0000-000000000001'),
   activo: z.boolean().default(true),
 });
 
@@ -49,10 +49,14 @@ export async function POST(request) {
 
   try {
     const rawBody = await request.json();
-    const cleanEmail = (rawBody.email || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    let cleanEmail = (rawBody.email || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    if (cleanEmail && !cleanEmail.includes('@')) {
+      cleanEmail = `${cleanEmail}@americasis.com`;
+    }
     const body = {
       ...rawBody,
-      email: cleanEmail
+      email: cleanEmail,
+      sucursal_id: rawBody.sucursal_id || 'a0000000-0000-0000-0000-000000000001'
     };
     const validation = createUserSchema.safeParse(body);
 

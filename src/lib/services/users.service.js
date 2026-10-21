@@ -1,7 +1,10 @@
 /**
- * Servicio Centralizado de Gestión y Persistencia de Usuarios y Técnicos
+ * Servicio Centralizado de Gestión y Persistencia Dinámica de Usuarios y Técnicos
+ * Conectado a Supabase con fallback a LocalStorage
  * América Sistemas de Comunicación
  */
+
+import { supabase } from '@/lib/config/supabase-client';
 
 export function normalizeEmail(email) {
   if (!email || typeof email !== 'string') return '';
@@ -23,8 +26,9 @@ export const DEFAULT_USERS = [
     cargo: 'Gerencia General'
   },
   {
-    id: 'b0000000-0000-0000-0000-000000000005',
+    id: '1f578df4-aa7b-4924-81a7-fc08b0961d1a',
     legacy_id: 'usr-ramiro-condori',
+    alias_id: 'b0000000-0000-0000-0000-000000000005',
     nombre_completo: 'Ramiro Condori',
     email: 'tecnico1@americasis.com',
     username: 'tecnico1',
@@ -34,7 +38,7 @@ export const DEFAULT_USERS = [
   },
   {
     id: 'b0000000-0000-0000-0000-000000000002',
-    nombre_completo: 'Roberto Gómez',
+    nombre_completo: 'Roberto Gómez (Técnico RF)',
     email: 'tecnico@americasis.com',
     username: 'tecnico',
     rol: 'TECNICO',
@@ -42,7 +46,7 @@ export const DEFAULT_USERS = [
     cargo: 'Técnico RF'
   },
   {
-    id: 'b0000000-0000-0000-0000-000000000004',
+    id: '53593940-1ee9-47b9-8139-3f57b267cf92',
     nombre_completo: 'Carlos Mamani',
     email: 'cmamani@americasis.com',
     username: 'cmamani',
@@ -52,7 +56,7 @@ export const DEFAULT_USERS = [
   },
   {
     id: 'b0000000-0000-0000-0000-000000000003',
-    nombre_completo: 'Ana Morales',
+    nombre_completo: 'Ana Morales (Recepción)',
     email: 'recepcion@americasis.com',
     username: 'recepcion',
     rol: 'RECEPCION',
@@ -81,14 +85,61 @@ export const UsersService = {
   },
 
   /**
-   * Inicializa y asegura que los usuarios esenciales (incluyendo a Ramiro Condori)
-   * estén presentes en localStorage['americasis_users']
+   * Consulta dinámica a la tabla 'usuarios' de Supabase
+   * Sincroniza automáticamente en localStorage y notifica globalmente
+   */
+  getUsuarios: async ({ soloActivos = true } = {}) => {
+    if (supabase) {
+      try {
+        let query = supabase
+          .from('usuarios')
+          .select('id, nombre_completo, email, rol, activo, cargo_titulo, firma_digital_url');
+
+        if (soloActivos) {
+          query = query.eq('activo', true);
+        }
+
+        const { data, error } = await query;
+        if (!error && Array.isArray(data) && data.length > 0) {
+          const mapped = data.map(u => ({
+            id: u.id,
+            nombre_completo: u.nombre_completo,
+            email: u.email,
+            username: (u.email || '').split('@')[0],
+            rol: u.rol,
+            activo: u.activo,
+            cargo: u.cargo_titulo || (u.rol === 'TECNICO' ? 'Técnico Especialista RF' : u.rol === 'ADMINISTRADOR' ? 'Administrador' : 'Recepción'),
+            firma_digital_url: u.firma_digital_url
+          }));
+
+          // Sincronizar en localStorage para fallback offline
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(mapped));
+              window.dispatchEvent(new CustomEvent('americasis_users_updated', {
+                detail: { users: mapped }
+              }));
+            } catch (e) {}
+          }
+          return mapped;
+        }
+      } catch (err) {
+        console.warn('Error consultando usuarios en Supabase:', err);
+      }
+    }
+
+    // Fallback a localStorage si Supabase falla o no está conectado
+    return UsersService.getAllUsers();
+  },
+
+  /**
+   * Inicializa y asegura que los usuarios esenciales estén presentes en localStorage
+   * y lanza sincronización asíncrona en segundo plano con Supabase
    */
   initStorage: () => {
     if (typeof window === 'undefined') return DEFAULT_USERS;
     try {
       const local = UsersService.getLocalUsers();
-      let modified = false;
       const map = new Map();
 
       // Precargar los default
@@ -106,26 +157,16 @@ export const UsersService = {
         }
       });
 
-      // Asegurar específicamente a Ramiro Condori
-      const ramiroNorm = normalizeEmail('tecnico1@americasis.com');
-      if (!map.has(ramiroNorm) || map.get(ramiroNorm).rol !== 'TECNICO') {
-        map.set(ramiroNorm, {
-          id: 'b0000000-0000-0000-0000-000000000005',
-          legacy_id: 'usr-ramiro-condori',
-          nombre_completo: 'Ramiro Condori',
-          email: 'tecnico1@americasis.com',
-          username: 'tecnico1',
-          rol: 'TECNICO',
-          activo: true,
-          cargo: 'Técnico Especialista RF'
-        });
-        modified = true;
-      }
-
       const combined = Array.from(map.values());
-      if (modified || local.length === 0) {
+      if (local.length === 0) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(combined));
       }
+
+      // Sincronizar asíncronamente con Supabase en segundo plano
+      if (typeof window !== 'undefined' && supabase) {
+        UsersService.getUsuarios().catch(() => {});
+      }
+
       return combined;
     } catch (e) {
       console.warn('Error inicializando americasis_users:', e);
@@ -134,7 +175,7 @@ export const UsersService = {
   },
 
   /**
-   * Obtiene todos los usuarios disponibles (por defecto + locales)
+   * Obtiene todos los usuarios disponibles de forma síncrona (localStorage + defaults)
    */
   getAllUsers: () => {
     if (typeof window === 'undefined') return DEFAULT_USERS;
@@ -154,21 +195,6 @@ export const UsersService = {
       }
     });
 
-    // Garantizar que Ramiro Condori siempre figure
-    const ramiroNorm = normalizeEmail('tecnico1@americasis.com');
-    if (!map.has(ramiroNorm)) {
-      map.set(ramiroNorm, {
-        id: 'b0000000-0000-0000-0000-000000000005',
-        legacy_id: 'usr-ramiro-condori',
-        nombre_completo: 'Ramiro Condori',
-        email: 'tecnico1@americasis.com',
-        username: 'tecnico1',
-        rol: 'TECNICO',
-        activo: true,
-        cargo: 'Técnico Especialista RF'
-      });
-    }
-
     return Array.from(map.values());
   },
 
@@ -181,7 +207,7 @@ export const UsersService = {
   },
 
   /**
-   * Busca un usuario por ID o por coincidencia de email / nombre
+   * Busca un usuario por ID o por coincidencia de email / username / nombre
    */
   findUserByIdOrEmail: (identifier) => {
     if (!identifier) return null;
@@ -191,11 +217,69 @@ export const UsersService = {
 
     return all.find(u => 
       String(u.id) === String(identifier) ||
+      (u.legacy_id && String(u.legacy_id) === String(identifier)) ||
+      (u.alias_id && String(u.alias_id) === String(identifier)) ||
       normalizeEmail(u.email) === cleanNorm ||
       (u.username && u.username.toLowerCase() === clean) ||
       (u.email && u.email.toLowerCase().startsWith(clean + '@')) ||
       (u.nombre_completo && u.nombre_completo.toLowerCase() === clean)
     ) || null;
+  },
+
+  /**
+   * Crea un usuario insertándolo en Supabase y guardándolo en localStorage
+   */
+  createUsuario: async (userData) => {
+    if (!userData) return null;
+    let cleanEmail = normalizeEmail(userData.email) || (userData.email || '').trim().toLowerCase();
+    if (cleanEmail && !cleanEmail.includes('@')) {
+      cleanEmail = `${cleanEmail}@americasis.com`;
+    }
+
+    const payload = {
+      nombre_completo: (userData.nombre_completo || 'Nuevo Colaborador').trim(),
+      email: cleanEmail,
+      rol: userData.rol || 'TECNICO',
+      activo: userData.activo !== false,
+      cargo_titulo: userData.cargo || (userData.rol === 'TECNICO' ? 'Técnico Especialista RF' : userData.rol === 'ADMINISTRADOR' ? 'Administrador' : 'Recepción'),
+      sucursal_id: 'a0000000-0000-0000-0000-000000000001',
+      password_hash: userData.password_hash || '$2b$10$0VYKfuMtSx.k6FGWQ.5mEu61FLzQCktOax6RQfXxdUcKfHeLB7h66'
+    };
+
+    let createdUser = null;
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('usuarios')
+          .insert(payload)
+          .select('id, nombre_completo, email, rol, activo, cargo_titulo, firma_digital_url')
+          .single();
+
+        if (!error && data) {
+          createdUser = {
+            id: data.id,
+            nombre_completo: data.nombre_completo,
+            email: data.email,
+            username: (data.email || '').split('@')[0],
+            rol: data.rol,
+            activo: data.activo,
+            cargo: data.cargo_titulo
+          };
+        }
+      } catch (err) {
+        console.warn('Error insertando usuario en Supabase:', err);
+      }
+    }
+
+    const finalUser = createdUser || {
+      id: userData.id || `usr-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      ...payload,
+      username: cleanEmail.split('@')[0],
+      cargo: payload.cargo_titulo
+    };
+
+    UsersService.saveLocalUser(finalUser);
+    return finalUser;
   },
 
   /**
@@ -206,23 +290,32 @@ export const UsersService = {
 
     try {
       const currentList = UsersService.getAllUsers();
-      const normEmail = normalizeEmail(userData.email);
+      let normEmail = normalizeEmail(userData.email);
+      if (normEmail && !normEmail.includes('@')) {
+        normEmail = `${normEmail}@americasis.com`;
+      }
       
       const cleanUser = {
         id: userData.id || `usr-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        legacy_id: userData.legacy_id,
+        alias_id: userData.alias_id,
         nombre_completo: (userData.nombre_completo || 'Nuevo Colaborador').trim(),
         email: normEmail || (userData.email || '').trim().toLowerCase(),
+        username: (normEmail || userData.email || '').split('@')[0],
         rol: userData.rol || 'TECNICO',
         activo: userData.activo !== false,
-        sucursal_id: userData.sucursal_id || 1,
+        sucursal_id: userData.sucursal_id || 'a0000000-0000-0000-0000-000000000001',
         cargo: userData.cargo || (userData.rol === 'TECNICO' ? 'Técnico Especialista RF' : (userData.rol === 'ADMINISTRADOR' ? 'Administrador' : 'Recepción')),
         actualizado_en: new Date().toISOString()
       };
 
-      // Si existe por id o por email normalizado, actualizar; de lo contrario añadir
       let updated = false;
       const newList = currentList.map(u => {
-        if (String(u.id) === String(cleanUser.id) || (normEmail && normalizeEmail(u.email) === normEmail)) {
+        if (
+          String(u.id) === String(cleanUser.id) || 
+          (cleanUser.legacy_id && String(u.legacy_id) === String(cleanUser.legacy_id)) ||
+          (normEmail && normalizeEmail(u.email) === normEmail)
+        ) {
           updated = true;
           return { ...u, ...cleanUser };
         }

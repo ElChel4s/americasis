@@ -9,10 +9,11 @@ import {
 import { UsersService, normalizeEmail } from '@/lib/services/users.service';
 
 const QUICK_TEST_USERS = [
-  { role: 'Admin', email: 'admin', label: 'Administrador' },
-  { role: 'Recepción', email: 'recepcion', label: 'Recepción' },
-  { role: 'Técnico', email: 'tecnico1@americasis.com', label: 'Ramiro Condori (Técnico)' },
-  { role: 'Técnico', email: 'tecnico', label: 'Roberto Gómez (Técnico)' },
+  { id: 'admin', role: 'Admin', email: 'admin@americasis.com', username: 'admin', label: 'Administrador General' },
+  { id: 'recepcion', role: 'Recepción', email: 'recepcion@americasis.com', username: 'recepcion', label: 'Ana Morales (Recepción)' },
+  { id: 'tecnico1', role: 'Técnico', email: 'tecnico1@americasis.com', username: 'tecnico1', label: 'Ramiro Condori (Técnico RF)' },
+  { id: 'tecnico', role: 'Técnico', email: 'tecnico@americasis.com', username: 'tecnico', label: 'Roberto Gómez (Técnico RF)' },
+  { id: 'cmamani', role: 'Técnico', email: 'cmamani@americasis.com', username: 'cmamani', label: 'Carlos Mamani (Laboratorio RF)' },
 ];
 
 function LoginForm() {
@@ -35,29 +36,45 @@ function LoginForm() {
   );
   const [successMessage, setSuccessMessage] = useState('');
 
-  // Cargar usuarios locales creados desde Admin (americasis_users)
+  // Cargar usuarios dinámicamente desde Supabase con fallback a americasis_users
   React.useEffect(() => {
-    const loadQuickUsers = () => {
+    let isMounted = true;
+
+    const mapUser = (u) => {
+      const email = u.email || '';
+      const username = (email.split('@')[0] || u.username || '').toLowerCase();
+      return {
+        id: u.id,
+        role: u.rol === 'ADMINISTRADOR' ? 'Admin' : u.rol === 'RECEPCION' ? 'Recepción' : 'Técnico',
+        email: email, // Email exacto en base de datos
+        username: username, // Usuario corto
+        label: u.nombre_completo || email
+      };
+    };
+
+    const loadQuickUsers = async () => {
       try {
-        UsersService.initStorage();
-        const all = UsersService.getAllUsers();
-        if (Array.isArray(all) && all.length > 0) {
-          const list = all
-            .filter(u => u.activo !== false)
-            .map(u => ({
-              role: u.rol === 'ADMINISTRADOR' ? 'Admin' : u.rol === 'RECEPCION' ? 'Recepción' : 'Técnico',
-              email: u.email || u.username,
-              label: u.nombre_completo || u.email
-            }));
-          setQuickUsers(list);
+        // 1. Carga inmediata síncrona desde caché local
+        const local = UsersService.getAllUsers();
+        if (Array.isArray(local) && local.length > 0 && isMounted) {
+          setQuickUsers(local.filter(u => u.activo !== false).map(mapUser));
         }
-      } catch (err) {}
+
+        // 2. Consulta dinámica en vivo a Supabase
+        const liveUsers = await UsersService.getUsuarios({ soloActivos: true });
+        if (Array.isArray(liveUsers) && liveUsers.length > 0 && isMounted) {
+          setQuickUsers(liveUsers.map(mapUser));
+        }
+      } catch (err) {
+        console.warn('Error sincronizando cuentas en login:', err);
+      }
     };
 
     loadQuickUsers();
     window.addEventListener('americasis_users_updated', loadQuickUsers);
     window.addEventListener('storage', loadQuickUsers);
     return () => {
+      isMounted = false;
       window.removeEventListener('americasis_users_updated', loadQuickUsers);
       window.removeEventListener('storage', loadQuickUsers);
     };
@@ -145,8 +162,10 @@ function LoginForm() {
     }
   };
 
-  const handleQuickFill = (testEmail) => {
-    setEmail(testEmail);
+  const handleQuickFill = (user) => {
+    // Autocompletar el campo USUARIO con el valor exacto del email que existe en la base de datos
+    const targetEmail = typeof user === 'string' ? user : (user.email || user.username);
+    setEmail(targetEmail);
     setPassword('America2026!');
     setErrorMessage('');
   };
@@ -276,9 +295,9 @@ function LoginForm() {
           <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto">
             {quickUsers.map((u) => (
               <button
-                key={u.email}
+                key={u.id || u.email}
                 type="button"
-                onClick={() => handleQuickFill(u.email)}
+                onClick={() => handleQuickFill(u)}
                 className="text-left px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-red-50/60 hover:border-red-200 border border-slate-200/80 transition-all text-xs cursor-pointer group"
               >
                 <div className="flex items-center justify-between">

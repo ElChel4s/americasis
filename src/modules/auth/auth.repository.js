@@ -4,13 +4,13 @@ import { supabase } from '../../lib/config/supabase-client';
 // Hash bcrypt de 'America2026!' generado con 10 rounds
 const DEFAULT_PASSWORD_HASH = '$2b$10$0VYKfuMtSx.k6FGWQ.5mEu61FLzQCktOax6RQfXxdUcKfHeLB7h66';
 
-// Memoria volátil para desarrollo offline (antes de conectar a Supabase/PostgreSQL)
+// Memoria volátil para desarrollo offline (sincronizada con Supabase)
 let mockUsers = [
   {
     id: 'b0000000-0000-0000-0000-000000000001',
     sucursal_id: 'a0000000-0000-0000-0000-000000000001',
     nombre_completo: 'Administrador General',
-    email: 'admin',
+    email: 'admin@americasis.com',
     password_hash: DEFAULT_PASSWORD_HASH,
     rol: 'ADMINISTRADOR',
     activo: true,
@@ -22,7 +22,7 @@ let mockUsers = [
     id: 'b0000000-0000-0000-0000-000000000002',
     sucursal_id: 'a0000000-0000-0000-0000-000000000001',
     nombre_completo: 'Roberto Gómez (Técnico RF)',
-    email: 'tecnico',
+    email: 'tecnico@americasis.com',
     password_hash: DEFAULT_PASSWORD_HASH,
     rol: 'TECNICO',
     activo: true,
@@ -31,8 +31,9 @@ let mockUsers = [
     creado_en: '2026-02-01T10:00:00Z',
   },
   {
-    id: 'b0000000-0000-0000-0000-000000000005',
+    id: '1f578df4-aa7b-4924-81a7-fc08b0961d1a',
     legacy_id: 'usr-ramiro-condori',
+    alias_id: 'b0000000-0000-0000-0000-000000000005',
     sucursal_id: 'a0000000-0000-0000-0000-000000000001',
     nombre_completo: 'Ramiro Condori',
     email: 'tecnico1@americasis.com',
@@ -44,10 +45,22 @@ let mockUsers = [
     creado_en: '2026-02-15T08:00:00Z',
   },
   {
+    id: '53593940-1ee9-47b9-8139-3f57b267cf92',
+    sucursal_id: 'a0000000-0000-0000-0000-000000000001',
+    nombre_completo: 'Carlos Mamani',
+    email: 'cmamani@americasis.com',
+    password_hash: DEFAULT_PASSWORD_HASH,
+    rol: 'TECNICO',
+    activo: true,
+    token_version: 1,
+    ultimo_login: new Date(Date.now() - 3600000 * 24).toISOString(),
+    creado_en: '2026-02-15T08:00:00Z',
+  },
+  {
     id: 'b0000000-0000-0000-0000-000000000003',
     sucursal_id: 'a0000000-0000-0000-0000-000000000001',
     nombre_completo: 'Ana Morales (Recepción)',
-    email: 'recepcion',
+    email: 'recepcion@americasis.com',
     password_hash: DEFAULT_PASSWORD_HASH,
     rol: 'RECEPCION',
     activo: true,
@@ -67,13 +80,14 @@ export const AuthRepository = {
     const normalized = cleanEmail.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const usernameOnly = cleanEmail.split('@')[0];
     const usernameNorm = normalized.split('@')[0];
+    const withDomain = usernameNorm.includes('@') ? usernameNorm : `${usernameNorm}@americasis.com`;
 
     if (supabase) {
       try {
         const { data, error } = await supabase
           .from('usuarios')
           .select('id, sucursal_id, nombre_completo, email, password_hash, rol, activo, token_version, ultimo_login, creado_en')
-          .or(`email.ilike.${cleanEmail},email.ilike.${normalized},email.ilike.${usernameOnly},email.ilike.${usernameNorm}`)
+          .or(`email.ilike."${cleanEmail}",email.ilike."${normalized}",email.ilike."${usernameOnly}",email.ilike."${usernameNorm}",email.ilike."${withDomain}"`)
           .limit(1)
           .maybeSingle();
 
@@ -85,9 +99,13 @@ export const AuthRepository = {
       const { rows } = await pool.query(
         `SELECT id, sucursal_id, nombre_completo, email, password_hash, rol, activo, token_version, ultimo_login, creado_en 
          FROM usuarios 
-         WHERE LOWER(TRIM(email)) = $1 OR LOWER(TRIM(email)) = $2 OR LOWER(TRIM(email)) = $3
+         WHERE LOWER(TRIM(email)) = $1 
+            OR LOWER(TRIM(email)) = $2 
+            OR LOWER(TRIM(email)) = $3
+            OR LOWER(TRIM(email)) = $4
+            OR LOWER(TRIM(email)) LIKE $5
          LIMIT 1`,
-        [cleanEmail, normalized, usernameNorm]
+        [cleanEmail, normalized, usernameNorm, withDomain, `${usernameNorm}@%`]
       );
       if (rows && rows.length > 0) return rows[0];
     } catch (err) {}
@@ -103,6 +121,7 @@ export const AuthRepository = {
         uNorm === normalized ||
         uUser === usernameNorm ||
         usernameNorm === uUser ||
+        uEmail === withDomain ||
         cleanEmail.startsWith(uUser + '@') ||
         normalized.startsWith(uUser + '@') ||
         uName === normalized
@@ -288,18 +307,26 @@ export const AuthRepository = {
    * Crea un nuevo usuario
    */
   async createUser({ sucursal_id = null, nombre_completo, email, password_hash, rol = 'TECNICO', activo = true }) {
-    const cleanEmail = email.trim().toLowerCase();
+    let cleanEmail = email.trim().toLowerCase();
+    if (cleanEmail && !cleanEmail.includes('@')) {
+      cleanEmail = `${cleanEmail}@americasis.com`;
+    }
+
+    const validSucursalId = (typeof sucursal_id === 'string' && sucursal_id.length > 10)
+      ? sucursal_id
+      : 'a0000000-0000-0000-0000-000000000001';
 
     if (supabase) {
       try {
         const { data, error } = await supabase
           .from('usuarios')
           .insert({
-            sucursal_id: sucursal_id || 'a0000000-0000-0000-0000-000000000001',
+            sucursal_id: validSucursalId,
             nombre_completo: nombre_completo.trim(),
             email: cleanEmail,
             password_hash,
             rol,
+            cargo_titulo: rol === 'TECNICO' ? 'Técnico Especialista RF' : rol === 'ADMINISTRADOR' ? 'Administrador General' : 'Recepción Mostrador',
             activo,
             token_version: 1
           })
@@ -307,7 +334,10 @@ export const AuthRepository = {
           .single();
 
         if (data && !error) return data;
-      } catch (err) {}
+        if (error) console.error('Error insertando usuario en Supabase:', error);
+      } catch (err) {
+        console.error('Excepción al crear usuario en Supabase:', err);
+      }
     }
 
     try {
@@ -315,7 +345,7 @@ export const AuthRepository = {
         `INSERT INTO usuarios (sucursal_id, nombre_completo, email, password_hash, rol, activo, token_version, creado_en)
          VALUES ($1, $2, $3, $4, $5, $6, 1, NOW())
          RETURNING id, sucursal_id, nombre_completo, email, rol, activo, token_version, ultimo_login, creado_en`,
-        [sucursal_id, nombre_completo.trim(), cleanEmail, password_hash, rol, activo]
+        [validSucursalId, nombre_completo.trim(), cleanEmail, password_hash, rol, activo]
       );
       return rows[0];
     } catch (err) {

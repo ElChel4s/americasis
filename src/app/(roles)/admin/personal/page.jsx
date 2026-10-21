@@ -80,15 +80,20 @@ export default function UsuariosPage() {
 
   const fetchUsers = async () => {
     try {
-      const res = await fetch('/api/users');
-      const data = await res.json();
-      if (data.success) {
-        const combined = mergeLocalUsers(data.data || []);
-        setUsers(combined);
+      // 1. Cargar dinámicamente desde Supabase vía UsersService.getUsuarios
+      const dynamicUsers = await UsersService.getUsuarios({ soloActivos: false });
+      if (Array.isArray(dynamicUsers) && dynamicUsers.length > 0) {
+        setUsers(dynamicUsers);
       } else {
-        const combined = mergeLocalUsers([]);
-        setUsers(combined);
-        showFeedback(data.message || 'Error al cargar usuarios', 'error');
+        const res = await fetch('/api/users');
+        const data = await res.json();
+        if (data.success) {
+          const combined = mergeLocalUsers(data.data || []);
+          setUsers(combined);
+        } else {
+          setUsers(mergeLocalUsers([]));
+          showFeedback(data.message || 'Error al cargar usuarios', 'error');
+        }
       }
     } catch (err) {
       const combined = mergeLocalUsers([]);
@@ -514,22 +519,25 @@ function ModalRegistrarUsuario({ onClose, onSuccess }) {
     setLoading(true);
     setError('');
 
-    const cleanEmail = normalizeEmail(email) || email.trim().toLowerCase();
-    const localUserObj = {
-      id: `usr-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      nombre_completo: nombre.trim(),
-      email: cleanEmail,
-      rol,
-      sucursal_id: Number(sucursalId),
-      activo: true,
-      cargo: rol === 'TECNICO' ? 'Técnico Especialista RF' : (rol === 'ADMINISTRADOR' ? 'Administrador' : 'Recepción')
-    };
-
-    // 1. Persistencia inmediata garantizada en LocalStorage
-    UsersService.saveLocalUser(localUserObj);
+    let cleanEmail = normalizeEmail(email) || email.trim().toLowerCase();
+    if (cleanEmail && !cleanEmail.includes('@')) {
+      cleanEmail = `${cleanEmail}@americasis.com`;
+    }
 
     try {
-      const res = await fetch('/api/users', {
+      // 1. Insertar directamente en Supabase (y en localStorage) mediante UsersService
+      const createdUser = await UsersService.createUsuario({
+        nombre_completo: nombre.trim(),
+        email: cleanEmail,
+        password: password.trim(),
+        rol,
+        activo: true,
+        sucursal_id: 'a0000000-0000-0000-0000-000000000001',
+        cargo: rol === 'TECNICO' ? 'Técnico Especialista RF' : (rol === 'ADMINISTRADOR' ? 'Administrador' : 'Recepción')
+      });
+
+      // 2. Notificar a la API del servidor en paralelo para sesiones
+      fetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -537,21 +545,16 @@ function ModalRegistrarUsuario({ onClose, onSuccess }) {
           email: cleanEmail,
           password: password.trim(),
           rol,
-          sucursal_id: Number(sucursalId),
+          sucursal_id: 'a0000000-0000-0000-0000-000000000001',
         }),
-      });
+      }).catch(() => {});
 
-      const data = await res.json();
-      if (res.ok && data.success && data.data) {
-        UsersService.saveLocalUser(data.data);
-        onSuccess(data.data);
-      } else {
-        // Guardado localmente con éxito
-        onSuccess(localUserObj);
+      if (createdUser) {
+        onSuccess(createdUser);
       }
     } catch (err) {
-      // Fallback offline / local con éxito
-      onSuccess(localUserObj);
+      setError(err.message || 'Error al registrar colaborador');
+      setLoading(false);
     }
   };
 
