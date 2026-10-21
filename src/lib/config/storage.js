@@ -86,3 +86,44 @@ export const uploadFile = async (fileBuffer, originalName = 'foto.webp', mimeTyp
   }
 };
 
+/**
+ * Elimina físicamente los archivos de evidencias (Supabase Storage o disco local).
+ * Las evidencias INLINE (data:...) no tienen archivo físico y se ignoran.
+ * @param {Array<{url_archivo?: string, nombre_archivo?: string, storage_driver?: string}>} items
+ */
+export const deleteStoredFiles = async (items = []) => {
+  const supabasePaths = [];
+  const marker = '/evidencias-radios/';
+
+  for (const item of items) {
+    const url = item?.url_archivo || item?.url || '';
+    if (!url || typeof url !== 'string' || url.startsWith('data:')) continue;
+
+    const markerPos = url.indexOf(marker);
+    if (markerPos >= 0) {
+      const objectPath = decodeURIComponent(url.substring(markerPos + marker.length).split('?')[0]);
+      if (objectPath) supabasePaths.push(objectPath);
+      continue;
+    }
+
+    if (url.startsWith('/uploads/evidencias/')) {
+      try {
+        // basename evita path traversal
+        const filePath = path.join(process.cwd(), 'public', 'uploads', 'evidencias', path.basename(url));
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      } catch (fsErr) {
+        console.warn('⚠️ No se pudo eliminar evidencia local:', fsErr.message);
+      }
+    }
+  }
+
+  if (supabase && supabasePaths.length > 0) {
+    try {
+      const { error } = await supabase.storage.from('evidencias-radios').remove(supabasePaths);
+      if (error) console.warn('⚠️ Error eliminando archivos de Supabase Storage:', error.message);
+    } catch (sbErr) {
+      console.warn('⚠️ Excepción eliminando archivos de Supabase Storage:', sbErr.message);
+    }
+  }
+};
+

@@ -157,16 +157,43 @@ export default function Step1Reception({
     }
   };
 
-  const handleRemoveImage = (index) => {
+  const handleRemoveImage = async (index) => {
     if (typeof window !== 'undefined' && !window.confirm('¿Desea eliminar esta fotografía de recepción?')) {
       return;
     }
     const current = equipo.imagenes || equipo.imagenesRecepcion || [];
+    const foto = current[index];
     const updated = current.filter((_, i) => i !== index);
+
+    // 1. Actualizar estado local de React
     updateEquipo(activeEquipoIndex, { 
       imagenes: updated,
       imagenesRecepcion: updated
     });
+
+    // 2. Actualizar inmediatamente el objeto de la orden en el contexto y localStorage
+    if (formData?.id) {
+      const updatedEquipos = [...(formData.equipos || [])];
+      updatedEquipos[activeEquipoIndex] = {
+        ...updatedEquipos[activeEquipoIndex],
+        imagenes: updated,
+        imagenesRecepcion: updated
+      };
+      const ordenActualizada = {
+        ...formData,
+        equipos: updatedEquipos
+      };
+      OrdersService.updateOrderLocal(formData.id, ordenActualizada);
+    }
+
+    // 3. Si la foto ya tenía ID en Supabase (equipo_evidencias), disparar eliminación en BD/Storage:
+    if (foto?.id) {
+      try {
+        await OrdersService.deleteEvidenceFoto(foto);
+      } catch (err) {
+        console.error("Error al borrar foto en Supabase:", err);
+      }
+    }
   };
 
   const imagePreviews = equipo.imagenes || equipo.imagenesRecepcion || [];

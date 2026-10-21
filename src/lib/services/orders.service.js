@@ -239,7 +239,7 @@ const mergeOrderPreservingPhotos = (serverOrder, localOrder) => {
       });
     };
 
-    const finalImgs = hasValidPhoto(lImgs) ? lImgs : (hasValidPhoto(sImgs) ? sImgs : (lImgs.length > 0 ? lImgs : sImgs));
+    const finalImgs = hasValidPhoto(sImgs) ? sImgs : (hasValidPhoto(lImgs) ? lImgs : []);
 
     // 2. Fotos de diagnóstico (interior / laboratorio)
     const sImgsInt = (Array.isArray(sEq.imagenesInternas) && sEq.imagenesInternas.length > 0)
@@ -250,7 +250,7 @@ const mergeOrderPreservingPhotos = (serverOrder, localOrder) => {
       ? lEq.imagenesInternas
       : (Array.isArray(lEq.imagenesDiagnostico) && lEq.imagenesDiagnostico.length > 0 ? lEq.imagenesDiagnostico : []);
 
-    const finalImgsInt = hasValidPhoto(lImgsInt) ? lImgsInt : (hasValidPhoto(sImgsInt) ? sImgsInt : (lImgsInt.length > 0 ? lImgsInt : sImgsInt));
+    const finalImgsInt = hasValidPhoto(sImgsInt) ? sImgsInt : (hasValidPhoto(lImgsInt) ? lImgsInt : []);
 
     // 3. Accesorios de recepción
     const accObj = (sEq.accesoriosRecepcion && Object.keys(sEq.accesoriosRecepcion).length > 0)
@@ -416,7 +416,69 @@ export const OrdersService = {
   },
 
   /**
-   * Obtiene una orden por su ID o número correlativo
+   * Actualiza inmediatamente el objeto de la orden en el contexto local, memoria RAM y localStorage
+   */
+  updateOrderLocal: (orderId, updatedOrder) => {
+    if (typeof window === 'undefined' || !orderId || !updatedOrder) return null;
+    try {
+      const orders = getStoredLocalOrders();
+      const targetId = String(orderId).trim();
+      const idx = orders.findIndex(o => 
+        String(o.id).trim() === targetId || 
+        String(o.numero_orden || '').trim() === targetId
+      );
+
+      if (idx >= 0) {
+        orders[idx] = { ...orders[idx], ...updatedOrder };
+      } else {
+        orders.unshift(updatedOrder);
+      }
+
+      // Actualizar memoria RAM de evidencias para sincronizar eliminación
+      const memoryImages = (updatedOrder.equipos || []).map((eq, i) => ({
+        equipoIndex: i,
+        imagenes: eq.imagenes || eq.imagenesRecepcion || [],
+        imagenesInternas: eq.imagenesInternas || eq.imagenesDiagnostico || []
+      }));
+      inMemoryOrderImages.set(targetId, memoryImages);
+      if (updatedOrder.numero_orden) inMemoryOrderImages.set(String(updatedOrder.numero_orden), memoryImages);
+
+      safeSaveLocalStorage(orders);
+      broadcastOrdersUpdate(updatedOrder);
+      return updatedOrder;
+    } catch (e) {
+      console.warn('[OrdersService] Error en updateOrderLocal:', e);
+      return updatedOrder;
+    }
+  },
+
+  /**
+   * Elimina una foto/evidencia en Supabase Storage y BD si posee ID
+   */
+  deleteEvidenceFoto: async (foto) => {
+    if (!foto) return false;
+    const fotoId = foto.id;
+    // Solo enviar a borrar si tiene id y no es un id temporal generado en cliente (img-...)
+    if (fotoId && !String(fotoId).startsWith('img-') && !String(fotoId).startsWith('temp-')) {
+      try {
+        const res = await fetch(`/api/evidences/${fotoId}`, {
+          method: 'DELETE'
+        });
+        if (res.ok) {
+          console.info(`[OrdersService] Evidencia #${fotoId} eliminada en servidor.`);
+          return true;
+        }
+      } catch (err) {
+        console.warn('[OrdersService] Error eliminando evidencia en servidor:', err);
+      }
+    }
+    return true;
+  },
+
+  /**
+   * Obtiene una orden por su ID o número correlativo.
+   * Prioriza la respuesta de la base de datos cuando hay conexión a internet,
+   * sobrescribiendo cualquier dato desactualizado o foto huérfana en caché local.
    */
   getOrderById: async (id) => {
     if (typeof window === 'undefined') return null;
@@ -435,18 +497,26 @@ export const OrdersService = {
       if (res.ok) {
         const result = await res.json();
         if (result.success && result.data) {
+          const serverOrder = result.data;
           const orders = getStoredLocalOrders();
           const idx = orders.findIndex(o => String(o.id) === String(id) || String(o.numero_orden) === String(id));
-          const existing = idx >= 0 ? orders[idx] : null;
-          const merged = mergeOrderPreservingPhotos(result.data, existing);
+
+          // Actualizar memoria RAM de evidencias fotográficas para que coincida exactamente con la BD
+          const memoryImages = (serverOrder.equipos || []).map((eq, i) => ({
+            equipoIndex: i,
+            imagenes: eq.imagenes || eq.imagenesRecepcion || [],
+            imagenesInternas: eq.imagenesInternas || eq.imagenesDiagnostico || []
+          }));
+          inMemoryOrderImages.set(String(serverOrder.id), memoryImages);
+          if (serverOrder.numero_orden) inMemoryOrderImages.set(String(serverOrder.numero_orden), memoryImages);
 
           if (idx >= 0) {
-            orders[idx] = merged;
+            orders[idx] = serverOrder;
           } else {
-            orders.unshift(merged);
+            orders.unshift(serverOrder);
           }
           safeSaveLocalStorage(orders);
-          return merged;
+          return rehydrateOrder(serverOrder);
         } else if (result.error) {
           OrdersService.removeOrderFromLocalCache(id);
           return null;
@@ -951,23 +1021,15 @@ export const OrdersService = {
             otros_descripcion: eq.otrosDescripcion || null
           }));
 
-      // Fotos de recepción (exterior)
-      const imgs = (Array.isArray(eq.imagenes) && eq.imagenes.length > 0)
-        ? eq.imagenes
-        : (Array.isArray(eq.imagenesRecepcion) && eq.imagenesRecepcion.length > 0
-            ? eq.imagenesRecepcion
-            : (Array.isArray(prev.imagenes) && prev.imagenes.length > 0
-                ? prev.imagenes
-                : (prev.imagenesRecepcion || [])));
+      // Fotos de recepción (exterior): respetar exactamente la lista definitiva del formulario
+      const imgs = Array.isArray(eq.imagenesRecepcion)
+        ? eq.imagenesRecepcion
+        : (Array.isArray(eq.imagenes) ? eq.imagenes : []);
 
       // Fotos de diagnóstico (interior / laboratorio)
-      const imgsInt = (Array.isArray(eq.imagenesInternas) && eq.imagenesInternas.length > 0)
-        ? eq.imagenesInternas
-        : (Array.isArray(eq.imagenesDiagnostico) && eq.imagenesDiagnostico.length > 0
-            ? eq.imagenesDiagnostico
-            : (Array.isArray(prev.imagenesInternas) && prev.imagenesInternas.length > 0
-                ? prev.imagenesInternas
-                : (prev.imagenesDiagnostico || [])));
+      const imgsInt = Array.isArray(eq.imagenesDiagnostico)
+        ? eq.imagenesDiagnostico
+        : (Array.isArray(eq.imagenesInternas) ? eq.imagenesInternas : (prev.imagenesDiagnostico || prev.imagenesInternas || []));
 
       return {
         ...prev,
@@ -1062,13 +1124,36 @@ export const OrdersService = {
       broadcastOrdersUpdate(updatedLocalOrder);
     }
 
-    // Persistir en backend central en segundo plano
+    // Persistir en backend central y sincronizar respuesta exacta de Supabase
     try {
-      await fetch(`/api/orders/${orderId}`, {
+      const res = await fetch(`/api/orders/${orderId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.data) {
+          const freshData = json.data;
+          const ordersNow = getStoredLocalOrders();
+          const curIdx = ordersNow.findIndex(o => String(o.id) === String(orderId) || String(o.numero_orden) === String(orderId));
+          if (curIdx >= 0) {
+            ordersNow[curIdx] = freshData;
+          } else {
+            ordersNow.unshift(freshData);
+          }
+          const memoryImages = (freshData.equipos || []).map((eq, idx) => ({
+            equipoIndex: idx,
+            imagenes: eq.imagenes || eq.imagenesRecepcion || [],
+            imagenesInternas: eq.imagenesInternas || eq.imagenesDiagnostico || []
+          }));
+          inMemoryOrderImages.set(String(freshData.id || orderId), memoryImages);
+          if (freshData.numero_orden) inMemoryOrderImages.set(String(freshData.numero_orden), memoryImages);
+          safeSaveLocalStorage(ordersNow);
+          broadcastOrdersUpdate(freshData);
+          return rehydrateOrder(freshData);
+        }
+      }
     } catch (netErr) {
       console.warn('[OrdersService] Error de red en updateReception (persistido localmente):', netErr);
     }

@@ -21,6 +21,7 @@ import {
 import QrMobileModal from '@/components/modals/QrMobileModal';
 import ImageCropModal from '@/components/modals/ImageCropModal';
 import RepuestoCombobox from '@/components/common/RepuestoCombobox';
+import { OrdersService } from '@/lib/services/orders.service';
 
 // Lista de los 10 accesorios estándar requeridos
 const ACCESORIOS_DEFAULT = [
@@ -980,12 +981,16 @@ export default function Step2Diagnosis({
                 </span>
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={async () => {
                     if (typeof window !== 'undefined' && !window.confirm('¿Desea eliminar esta fotografía de diagnóstico interno?')) {
                       return;
                     }
+                    const foto = imagenesInternas[idx];
                     const filtered = imagenesInternas.filter((_, i) => i !== idx);
                     setImagenesInternas(filtered);
+                    if (foto?.id) {
+                      OrdersService.deleteEvidenceFoto(foto).catch(() => {});
+                    }
                   }}
                   className="absolute top-1.5 right-1.5 w-7 h-7 bg-red-600 hover:bg-red-700 active:scale-90 text-white rounded-full shadow-lg transition-all cursor-pointer z-10 flex items-center justify-center ring-2 ring-white/80"
                   title="Eliminar foto de diagnóstico"

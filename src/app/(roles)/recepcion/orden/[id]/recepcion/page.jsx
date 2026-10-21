@@ -244,12 +244,18 @@ function EditarRecepcionContent() {
 
     setIsSaving(true);
     try {
-      await OrdersService.updateReception(order.id, formData);
+      const savedResult = await OrdersService.updateReception(order.id, formData);
       showFeedbackMsg('¡Datos de recepción guardados exitosamente!', 'success');
-      // Recargar orden para confirmar cambios sincronizados
+      // Recargar orden para confirmar cambios sincronizados directamente con Supabase
       const refreshed = await OrdersService.getOrderById(order.id);
-      if (refreshed) {
-        setOrder(refreshed);
+      const finalOrder = refreshed || savedResult;
+      if (finalOrder) {
+        setOrder(finalOrder);
+        setFormData(prev => ({
+          ...prev,
+          ...finalOrder,
+          equipos: formatEquiposForStep1(finalOrder.equipos)
+        }));
       }
     } catch (err) {
       console.error('Error guardando cambios de recepción:', err);

@@ -1,6 +1,7 @@
 import { pool, withTransaction, query } from '../../lib/config/database';
 import { supabase } from '../../lib/config/supabase-client';
 import { numeroALetras } from '../../lib/common/numero-a-letras';
+import { deleteStoredFiles } from '../../lib/config/storage';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const sanitizeUuid = (val) => (typeof val === 'string' && UUID_REGEX.test(val)) ? val : null;
@@ -67,6 +68,66 @@ async function syncEquipoEvidenciasSupabase(ordenId, equipoId, fotos = []) {
   }
 
   return inserted;
+}
+
+const normalizeEtapa = (etapa) => {
+  const e = String(etapa || 'RECEPCION').toUpperCase();
+  return (e === 'DIAGNOSTICO' || e === 'INTERNA' || e === 'INTERNO') ? 'DIAGNOSTICO' : 'RECEPCION';
+};
+
+/**
+ * Elimina de public.equipo_evidencias (y del Storage) las fotos de una etapa
+ * que ya NO están presentes en la lista definitiva enviada por el frontend.
+ * Una foto se considera conservada si coincide por id, url o nombre_archivo.
+ */
+async function pruneEquipoEvidenciasSupabase(equipoId, etapa, keepFotos = []) {
+  if (!supabase || !equipoId) return 0;
+  const targetEtapa = normalizeEtapa(etapa);
+
+  const keepIds = new Set();
+  const keepUrls = new Set();
+  const keepNames = new Set();
+  for (const f of keepFotos) {
+    if (!f) continue;
+    if (typeof f === 'string') { keepUrls.add(f); continue; }
+    if (f.id !== undefined && f.id !== null) keepIds.add(String(f.id));
+    const u = f.url_archivo || f.url || f.dataUrl;
+    if (u) keepUrls.add(u);
+    const n = f.nombre_archivo || f.name;
+    if (n) keepNames.add(n);
+  }
+
+  try {
+    const { data: rows, error } = await supabase
+      .from('equipo_evidencias')
+      .select('id, nombre_archivo, url_archivo, etapa, storage_driver')
+      .eq('equipo_id', equipoId);
+    if (error || !Array.isArray(rows)) return 0;
+
+    const toDelete = rows.filter(r =>
+      normalizeEtapa(r.etapa) === targetEtapa &&
+      !keepIds.has(String(r.id)) &&
+      !keepUrls.has(r.url_archivo) &&
+      !keepNames.has(r.nombre_archivo)
+    );
+    if (toDelete.length === 0) return 0;
+
+    const { error: delErr } = await supabase
+      .from('equipo_evidencias')
+      .delete()
+      .in('id', toDelete.map(r => r.id));
+    if (delErr) {
+      console.error('Error eliminando evidencias huérfanas:', delErr);
+      return 0;
+    }
+
+    await deleteStoredFiles(toDelete);
+    console.info(`[OrdersRepository] ${toDelete.length} evidencia(s) ${targetEtapa} eliminada(s) del equipo ${equipoId}`);
+    return toDelete.length;
+  } catch (err) {
+    console.warn('Excepción depurando evidencias:', err.message);
+    return 0;
+  }
 }
 
 export const OrdersRepository = {
@@ -780,7 +841,7 @@ export const OrdersRepository = {
               accesorios: eq.equipo_accesorios_recepcion || [],
               fallas: eq.equipo_fallas || [],
               repuestos: eq.equipo_repuestos_cotizados || [],
-              imagenes: recImgs.length > 0 ? recImgs : allImgs,
+              imagenes: recImgs,
               imagenesRecepcion: recImgs,
               imagenesInternas: diagImgs,
               imagenesDiagnostico: diagImgs,
@@ -873,13 +934,13 @@ export const OrdersRepository = {
               const evRows = eq.equipo_evidencias || [];
               const recImgs = evRows
                 .filter(ev => String(ev.etapa || 'RECEPCION').toUpperCase() === 'RECEPCION')
-                .map(ev => ({ id: ev.id, url: ev.url_archivo, name: ev.nombre_archivo, etapa: 'RECEPCION' }));
+                .map(ev => ({ id: ev.id, url: ev.url_archivo, url_archivo: ev.url_archivo, name: ev.nombre_archivo, nombre_archivo: ev.nombre_archivo, etapa: 'RECEPCION' }));
               const diagImgs = evRows
                 .filter(ev => String(ev.etapa || '').toUpperCase() === 'DIAGNOSTICO')
-                .map(ev => ({ id: ev.id, url: ev.url_archivo, name: ev.nombre_archivo, etapa: 'DIAGNOSTICO' }));
+                .map(ev => ({ id: ev.id, url: ev.url_archivo, url_archivo: ev.url_archivo, name: ev.nombre_archivo, nombre_archivo: ev.nombre_archivo, etapa: 'DIAGNOSTICO' }));
               return {
                 ...eq,
-                imagenes: recImgs.length > 0 ? recImgs : evRows.map(ev => ({ id: ev.id, url: ev.url_archivo, name: ev.nombre_archivo, etapa: ev.etapa })),
+                imagenes: recImgs,
                 imagenesRecepcion: recImgs,
                 imagenesInternas: diagImgs,
                 imagenesDiagnostico: diagImgs,
@@ -1191,28 +1252,49 @@ export const OrdersRepository = {
                 await supabase.from('equipo_accesorios_recepcion').insert(accRows);
               }
 
-              // Sincronizar evidencias fotográficas (RECEPCION y DIAGNOSTICO)
+              // Sincronización COMPLETA de evidencias (lista definitiva enviada por el frontend):
+              //  - Se insertan sólo las fotos nuevas (sin registro en BD).
+              //  - Se eliminan de BD/Storage las que ya no están en pantalla.
+              // NOTA: `eq.evidencias` es un eco de lectura del servidor y NO se usa como fuente,
+              // ya que reintroducía fotos eliminadas por el usuario.
+              const recKeep = [];
+              const diagKeep = [];
               const eqFotos = [];
               const seenUrls = new Set();
-              const pushFoto = (f, defaultEtapa = 'RECEPCION') => {
+              const collect = (f, defaultEtapa) => {
                 if (!f) return;
+                const etapa = normalizeEtapa(typeof f === 'object' && f.etapa ? f.etapa : defaultEtapa);
+                (etapa === 'DIAGNOSTICO' ? diagKeep : recKeep).push(f);
+
                 const u = typeof f === 'string' ? f : (f.url_archivo || f.url || f.dataUrl);
                 if (!u || seenUrls.has(u)) return;
                 seenUrls.add(u);
+                // Las fotos que ya tienen id real (UUID) en BD no se reinsertan
+                if (typeof f === 'object' && f.id && UUID_REGEX.test(String(f.id))) {
+                  return;
+                }
                 eqFotos.push({
                   ...(typeof f === 'object' ? f : {}),
                   url_archivo: u,
                   nombre_archivo: f?.nombre_archivo || f?.name || `evidencia_${Date.now()}_${eqFotos.length}.webp`,
-                  etapa: f?.etapa || defaultEtapa
+                  etapa
                 });
               };
 
-              (eq.imagenesRecepcion || []).forEach(f => pushFoto(f, 'RECEPCION'));
-              (eq.imagenes || []).forEach(f => pushFoto(f, f?.etapa || 'RECEPCION'));
-              (eq.imagenesDiagnostico || []).forEach(f => pushFoto(f, 'DIAGNOSTICO'));
-              (eq.imagenesInternas || []).forEach(f => pushFoto(f, 'DIAGNOSTICO'));
-              (eq.evidencias || []).forEach(f => pushFoto(f, f?.etapa || 'RECEPCION'));
+              const hasRecList = Array.isArray(eq.imagenesRecepcion) || Array.isArray(eq.imagenes);
+              const hasDiagList = Array.isArray(eq.imagenesDiagnostico) || Array.isArray(eq.imagenesInternas);
 
+              (eq.imagenesRecepcion || []).forEach(f => collect(f, 'RECEPCION'));
+              (eq.imagenes || []).forEach(f => collect(f, 'RECEPCION'));
+              (eq.imagenesDiagnostico || []).forEach(f => collect(f, 'DIAGNOSTICO'));
+              (eq.imagenesInternas || []).forEach(f => collect(f, 'DIAGNOSTICO'));
+
+              if (hasRecList) {
+                await pruneEquipoEvidenciasSupabase(savedEqId, 'RECEPCION', recKeep);
+              }
+              if (hasDiagList) {
+                await pruneEquipoEvidenciasSupabase(savedEqId, 'DIAGNOSTICO', diagKeep);
+              }
               if (eqFotos.length > 0) {
                 await syncEquipoEvidenciasSupabase(resolvedOrderId, savedEqId, eqFotos);
               }

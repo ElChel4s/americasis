@@ -1,5 +1,5 @@
 import { EvidencesRepository } from './evidences.repository';
-import { uploadFile } from '../../lib/config/storage';
+import { uploadFile, deleteStoredFiles } from '../../lib/config/storage';
 import { logAudit } from '../../lib/common/audit-logger';
 
 export const EvidencesService = {
@@ -64,14 +64,17 @@ export const EvidencesService = {
   async removeEvidence(id, user = null) {
     const deleted = await EvidencesRepository.deleteEvidence(id);
     if (deleted) {
-      await logAudit({
-        equipoId: deleted.equipo_id,
-        usuarioId: user?.id || null,
-        usuarioNombre: user?.nombre_completo || 'Usuario',
-        usuarioRol: user?.rol || 'SISTEMA',
-        accion: 'ELIMINAR_EVIDENCIA',
-        detalleCambio: `Evidencia eliminada: ${deleted.nombre_archivo}`
-      });
+      await deleteStoredFiles([deleted]);
+      try {
+        await logAudit({
+          equipoId: deleted.equipo_id,
+          usuarioId: user?.id || null,
+          usuarioNombre: user?.nombre_completo || 'Usuario',
+          usuarioRol: user?.rol || 'SISTEMA',
+          accion: 'ELIMINAR_EVIDENCIA',
+          detalleCambio: `Evidencia eliminada: ${deleted.nombre_archivo || id}`
+        });
+      } catch (e) {}
     }
     return deleted;
   }
