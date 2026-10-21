@@ -271,6 +271,10 @@ const mergeOrderPreservingPhotos = (serverOrder, localOrder) => {
     };
   });
 
+  const resolvedSolicitudAsignacion = localOrder?.solicitud_asignacion !== undefined
+    ? localOrder.solicitud_asignacion
+    : (serverOrder?.solicitud_asignacion || null);
+
   const merged = {
     ...localOrder,
     ...serverOrder,
@@ -279,6 +283,7 @@ const mergeOrderPreservingPhotos = (serverOrder, localOrder) => {
     tecnicoAsignadoId: resolvedTecnicoId,
     tecnico_nombre_manual: resolvedTecnicoNombre,
     tecnicoNombre: resolvedTecnicoNombre,
+    solicitud_asignacion: resolvedSolicitudAsignacion,
     condiciones: mergedCondiciones,
     condiciones_comerciales_json: mergedCondiciones,
     equipos: mergedEquipos
@@ -1060,47 +1065,64 @@ export const OrdersService = {
   },
 
   /**
-   * Técnico solicita permiso para diagnosticar / editar una orden
+   * 1. Técnico solicita asignación de una orden
    */
-  requestTechnicianPermission: async (orderId, technicianUser) => {
+  solicitarAsignacion: async (orderId, technicianUser) => {
     if (typeof window === 'undefined') return null;
 
-    const payload = {
-      tecnico_id: technicianUser.id,
-      tecnico_nombre: technicianUser.nombre_completo,
-      estado: 'PENDIENTE',
-      fecha_solicitud: new Date().toISOString()
-    };
+    const techId = technicianUser?.id || 'usr-tecnico';
+    const techName = technicianUser?.nombre_completo || 'Técnico Especialista';
 
-    try {
-      await fetch(`/api/orders/${orderId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          condiciones_comerciales_json: { solicitud_edicion: payload }
-        })
-      });
-    } catch (e) {}
+    const solicitud = {
+      tecnico_id: techId,
+      tecnico_nombre: techName,
+      fecha_solicitud: new Date().toISOString(),
+      estado: 'PENDIENTE'
+    };
 
     const orders = await OrdersService.getOrders();
     const index = orders.findIndex(o => String(o.id) === String(orderId) || String(o.numero_orden) === String(orderId));
     if (index >= 0) {
+      orders[index].solicitud_asignacion = solicitud;
+      // Compatibilidad con vistas previas
       orders[index].solicitud_edicion_estado = 'PENDIENTE';
-      orders[index].solicitud_edicion_tecnico_id = technicianUser.id;
-      orders[index].solicitud_edicion_tecnico_nombre = technicianUser.nombre_completo;
-      orders[index].solicitud_edicion_fecha = payload.fecha_solicitud;
+      orders[index].solicitud_edicion_tecnico_id = techId;
+      orders[index].solicitud_edicion_tecnico_nombre = techName;
+      orders[index].solicitud_edicion_fecha = solicitud.fecha_solicitud;
       orders[index].updatedAt = new Date().toISOString();
+
       safeSaveLocalStorage(orders);
-      broadcastOrdersUpdate(orders[index]);
-      return rehydrateOrder(orders[index]);
+      const rehydrated = rehydrateOrder(orders[index]);
+      broadcastOrdersUpdate(rehydrated);
+
+      // Persistencia en backend en segundo plano
+      try {
+        await fetch(`/api/orders/${orderId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            condiciones_comerciales_json: {
+              ...(orders[index].condiciones || {}),
+              solicitud_asignacion: solicitud,
+              solicitud_edicion: solicitud
+            }
+          })
+        });
+      } catch (e) {}
+
+      return rehydrated;
     }
     return null;
   },
 
   /**
-   * Recepción / Admin responde a la solicitud de asignación del técnico
+   * 2. Recepción / Administrador aprueba la solicitud de asignación
+   * - tecnico_asignado_id: ID del técnico solicitante
+   * - tecnico_nombre: Nombre completo del técnico
+   * - estado: Pasa a EN_DIAGNOSTICO
+   * - solicitud_asignacion.estado: "APROBADA"
    */
-  respondTechnicianPermission: async (orderId, approve = true) => {
+  aprobarAsignacion: async (orderId) => {
     if (typeof window === 'undefined') return null;
 
     const orders = await OrdersService.getOrders();
@@ -1108,32 +1130,116 @@ export const OrdersService = {
     if (index < 0) return null;
 
     const current = orders[index];
-    const techId = current.solicitud_edicion_tecnico_id;
-    const techName = current.solicitud_edicion_tecnico_nombre || 'Técnico Especialista';
+    const solicitud = current.solicitud_asignacion || {
+      tecnico_id: current.solicitud_edicion_tecnico_id,
+      tecnico_nombre: current.solicitud_edicion_tecnico_nombre || 'Técnico Especialista'
+    };
 
-    if (approve && techId) {
-      return await OrdersService.assignTechnician(orderId, techId, techName);
-    } else {
-      try {
-        await fetch(`/api/orders/${orderId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            condiciones_comerciales_json: {
-              solicitud_edicion: { estado: 'RECHAZADA', fecha_rechazo: new Date().toISOString() }
-            }
-          })
-        });
-      } catch (e) {}
+    const techId = solicitud.tecnico_id;
+    const techName = solicitud.tecnico_nombre || 'Técnico Especialista';
 
-      orders[index].solicitud_edicion_estado = 'RECHAZADA';
-      orders[index].solicitud_edicion_tecnico_id = null;
-      orders[index].solicitud_edicion_tecnico_nombre = null;
-      orders[index].updatedAt = new Date().toISOString();
-      safeSaveLocalStorage(orders);
-      broadcastOrdersUpdate(orders[index]);
-      return rehydrateOrder(orders[index]);
-    }
+    orders[index] = {
+      ...current,
+      tecnico_asignado_id: techId,
+      usuario_tecnico_id: techId,
+      tecnicoAsignadoId: techId,
+      tecnico_nombre: techName,
+      tecnico_nombre_manual: techName,
+      tecnicoNombre: techName,
+      estado: 'EN_DIAGNOSTICO',
+      solicitud_asignacion: {
+        ...solicitud,
+        estado: 'APROBADA',
+        fecha_aprobacion: new Date().toISOString()
+      },
+      solicitud_edicion_estado: 'APROBADA',
+      condiciones: {
+        ...(current.condiciones || {}),
+        tecnicoFirmanteNombre: techName
+      },
+      condiciones_comerciales_json: {
+        ...(current.condiciones_comerciales_json || {}),
+        tecnicoFirmanteNombre: techName,
+        solicitud_asignacion: {
+          ...solicitud,
+          estado: 'APROBADA',
+          fecha_aprobacion: new Date().toISOString()
+        }
+      },
+      updatedAt: new Date().toISOString()
+    };
+
+    safeSaveLocalStorage(orders);
+    const updated = rehydrateOrder(orders[index]);
+    broadcastOrdersUpdate(updated);
+
+    // Persistencia en backend en segundo plano
+    try {
+      await fetch(`/api/orders/${orderId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          estado: 'EN_DIAGNOSTICO',
+          usuario_tecnico_id: techId,
+          tecnico_nombre_manual: techName,
+          condiciones_comerciales_json: orders[index].condiciones_comerciales_json
+        })
+      });
+    } catch (e) {}
+
+    return updated;
+  },
+
+  /**
+   * 3. Recepción / Administrador rechaza la solicitud de asignación
+   * - Limpia la solicitud para que la orden vuelva a quedar disponible
+   */
+  rechazarAsignacion: async (orderId) => {
+    if (typeof window === 'undefined') return null;
+
+    const orders = await OrdersService.getOrders();
+    const index = orders.findIndex(o => String(o.id) === String(orderId) || String(o.numero_orden) === String(orderId));
+    if (index < 0) return null;
+
+    orders[index] = {
+      ...orders[index],
+      solicitud_asignacion: null,
+      solicitud_edicion_estado: null,
+      solicitud_edicion_tecnico_id: null,
+      solicitud_edicion_tecnico_nombre: null,
+      updatedAt: new Date().toISOString()
+    };
+
+    safeSaveLocalStorage(orders);
+    const updated = rehydrateOrder(orders[index]);
+    broadcastOrdersUpdate(updated);
+
+    // Persistencia en backend en segundo plano
+    try {
+      await fetch(`/api/orders/${orderId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          condiciones_comerciales_json: {
+            solicitud_asignacion: null,
+            solicitud_edicion: null
+          }
+        })
+      });
+    } catch (e) {}
+
+    return updated;
+  },
+
+  // Aliases para retrocompatibilidad
+  requestTechnicianPermission: async (orderId, technicianUser) => {
+    return await OrdersService.solicitarAsignacion(orderId, technicianUser);
+  },
+
+  respondTechnicianPermission: async (orderId, approve = true) => {
+    return approve 
+      ? await OrdersService.aprobarAsignacion(orderId) 
+      : await OrdersService.rechazarAsignacion(orderId);
   },
 
   /**

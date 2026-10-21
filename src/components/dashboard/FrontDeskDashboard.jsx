@@ -85,26 +85,32 @@ export default function FrontDeskDashboard() {
     setTimeout(() => setToastMessage(''), 4000);
   };
 
-  // Solicitudes pendientes de técnicos para editar órdenes
+  // Solicitudes pendientes de asignación de técnicos
   const pendingRequests = useMemo(() => {
-    return orders.filter(o => o.solicitud_edicion_estado === 'PENDIENTE');
+    return orders.filter(o => {
+      const sol = o.solicitud_asignacion;
+      if (sol && sol.estado === 'PENDIENTE') return true;
+      if (o.solicitud_edicion_estado === 'PENDIENTE') return true;
+      return false;
+    });
   }, [orders]);
 
-  const handleApproveRequest = async (orderId) => {
+  const handleApproveRequest = async (order) => {
     try {
-      const updated = await OrdersService.respondTechnicianPermission(orderId, true);
-      setOrders(prev => prev.map(o => o.id === orderId ? updated : o));
-      showToast('Solicitud aprobada: Técnico habilitado para diagnosticar la orden.');
+      const techName = order.solicitud_asignacion?.tecnico_nombre || order.solicitud_edicion_tecnico_nombre || 'Técnico Especialista';
+      const updated = await OrdersService.aprobarAsignacion(order.id);
+      setOrders(prev => prev.map(o => o.id === order.id ? updated : o));
+      showToast(`Orden asignada exitosamente a ${techName}`);
     } catch (err) {
-      showToast('No se pudo aprobar la solicitud.');
+      showToast('No se pudo aprobar la asignación.');
     }
   };
 
   const handleRejectRequest = async (orderId) => {
     try {
-      const updated = await OrdersService.respondTechnicianPermission(orderId, false);
+      const updated = await OrdersService.rechazarAsignacion(orderId);
       setOrders(prev => prev.map(o => o.id === orderId ? updated : o));
-      showToast('Solicitud de diagnóstico rechazada.');
+      showToast('Solicitud rechazada. La orden vuelve a estar disponible.');
     } catch (err) {
       showToast('No se pudo rechazar la solicitud.');
     }
@@ -260,62 +266,70 @@ export default function FrontDeskDashboard() {
               <div>
                 <div className="flex items-center gap-2">
                   <h4 className="text-xs sm:text-sm font-black uppercase tracking-wider text-indigo-950">
-                    Solicitudes de Diagnóstico Técnico Pendientes
+                    Solicitudes de Asignación Técnica Pendientes
                   </h4>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-indigo-600 text-white">
                     {pendingRequests.length} pendiente(s)
                   </span>
                 </div>
                 <p className="text-xs text-indigo-900 mt-0.5">
-                  Los siguientes técnicos solicitan autorización para diagnosticar y editar las órdenes indicadas:
+                  Técnicos que han solicitado tomar y diagnosticar órdenes de servicio:
                 </p>
               </div>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
-            {pendingRequests.map(reqOrder => (
-              <div
-                key={reqOrder.id}
-                className="bg-white p-4 rounded-2xl border border-indigo-200/90 shadow-xs flex flex-col justify-between gap-3"
-              >
-                <div>
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono font-black text-xs text-gray-900">
-                      #{reqOrder.numero_orden || reqOrder.id}
-                    </span>
-                    <span className="text-[10px] font-black uppercase bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded">
-                      Permiso Requerido
-                    </span>
-                  </div>
-                  <p className="text-xs font-bold text-gray-800 truncate mt-1">
-                    {reqOrder.razon_social}
-                  </p>
-                  <p className="text-[11px] text-gray-600 mt-1">
-                    Técnico: <strong className="text-indigo-950 underline">{reqOrder.solicitud_edicion_tecnico_nombre || 'Técnico'}</strong>
-                  </p>
-                </div>
+            {pendingRequests.map(reqOrder => {
+              const techName = reqOrder.solicitud_asignacion?.tecnico_nombre || reqOrder.solicitud_edicion_tecnico_nombre || 'Técnico Especialista';
+              const numOS = reqOrder.numero_orden || reqOrder.id;
+              const clientName = reqOrder.razon_social || reqOrder.cliente || 'Cliente Mostrador';
+              const handyCount = reqOrder.equipos?.length || 1;
 
-                <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-                  <button
-                    type="button"
-                    onClick={() => handleApproveRequest(reqOrder.id)}
-                    className="flex-1 py-1.5 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-xs flex items-center justify-center gap-1 cursor-pointer transition-all"
-                  >
-                    <Check size={14} />
-                    <span>Aprobar Permiso</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleRejectRequest(reqOrder.id)}
-                    className="py-1.5 px-3 bg-slate-100 hover:bg-slate-200 text-gray-600 text-xs font-bold rounded-xl cursor-pointer transition-all"
-                  >
-                    <X size={14} />
-                    <span>Rechazar</span>
-                  </button>
+              return (
+                <div
+                  key={reqOrder.id}
+                  className="bg-white p-4 rounded-2xl border border-indigo-200 shadow-sm flex flex-col justify-between gap-3 hover:shadow-md transition-shadow"
+                >
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono font-black text-xs text-gray-900">
+                        #{numOS}
+                      </span>
+                      <span className="text-[10px] font-black uppercase bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded flex items-center gap-1">
+                        <Clock size={11} className="text-amber-700" />
+                        <span>Pendiente</span>
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-gray-800 leading-snug">
+                      El técnico <strong className="text-indigo-950 font-black">{techName}</strong> solicita la orden <strong className="font-mono font-black text-gray-900">#{numOS}</strong> ({clientName} - {handyCount} {handyCount === 1 ? 'radio' : 'radios'}).
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                    <button
+                      type="button"
+                      id={`btn-aprobar-asignacion-${reqOrder.id}`}
+                      onClick={() => handleApproveRequest(reqOrder)}
+                      className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                    >
+                      <Check size={14} />
+                      <span>Aprobar Asignación</span>
+                    </button>
+                    <button
+                      type="button"
+                      id={`btn-rechazar-asignacion-${reqOrder.id}`}
+                      onClick={() => handleRejectRequest(reqOrder.id)}
+                      className="py-2 px-3 bg-slate-100 hover:bg-red-50 hover:text-red-700 text-gray-600 text-xs font-bold rounded-xl cursor-pointer transition-all"
+                    >
+                      <X size={14} />
+                      <span>Rechazar</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

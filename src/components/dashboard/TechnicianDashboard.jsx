@@ -24,6 +24,13 @@ export default function TechnicianDashboard() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState('ALL'); // 'ALL' | 'MINE' | 'PENDING' | 'DONE'
+  const [requestingId, setRequestingId] = useState(null);
+  const [toastMessage, setToastMessage] = useState('');
+
+  const showToast = (msg) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(''), 4000);
+  };
 
   const fetchOrders = async () => {
     try {
@@ -37,13 +44,32 @@ export default function TechnicianDashboard() {
     }
   };
 
+  const handleRequestAssignment = async (ord) => {
+    try {
+      setRequestingId(ord.id);
+      await OrdersService.solicitarAsignacion(ord.id, currentUser);
+      await fetchOrders();
+      showToast('Solicitud enviada a Recepción/Administración');
+    } catch (err) {
+      console.error('Error al solicitar asignación:', err);
+      showToast('Error al enviar la solicitud.');
+    } finally {
+      setRequestingId(null);
+    }
+  };
+
   useEffect(() => {
     fetchOrders();
 
     fetch('/api/auth/me')
       .then(r => r.json())
       .then(j => {
-        if (j.success) setCurrentUser(j.data);
+        if (j.success && j.data) {
+          setCurrentUser(j.data);
+          try {
+            localStorage.setItem('america_user', JSON.stringify(j.data));
+          } catch (e) {}
+        }
       })
       .catch(() => {});
 
@@ -62,8 +88,15 @@ export default function TechnicianDashboard() {
   // Verificar si la orden está asignada al usuario actual
   const isOrderAssignedToMe = (order) => {
     if (!currentUser) return false;
-    if (order.usuario_tecnico_id && String(order.usuario_tecnico_id) === String(currentUser.id)) return true;
+    // Si la solicitud de asignación fue aprobada para este técnico
+    if (order.solicitud_asignacion && order.solicitud_asignacion.estado === 'APROBADA' &&
+        (String(order.solicitud_asignacion.tecnico_id) === String(currentUser.id) ||
+         (order.solicitud_asignacion.tecnico_nombre && currentUser.nombre_completo &&
+          currentUser.nombre_completo.toLowerCase() === order.solicitud_asignacion.tecnico_nombre.toLowerCase()))) {
+      return true;
+    }
     if (order.tecnico_asignado_id && String(order.tecnico_asignado_id) === String(currentUser.id)) return true;
+    if (order.usuario_tecnico_id && String(order.usuario_tecnico_id) === String(currentUser.id)) return true;
     if (order.tecnicoAsignadoId && String(order.tecnicoAsignadoId) === String(currentUser.id)) return true;
     if (order.tecnico_nombre_manual && currentUser.nombre_completo &&
         (order.tecnico_nombre_manual.toLowerCase().includes(currentUser.nombre_completo.toLowerCase()) ||
@@ -137,6 +170,14 @@ export default function TechnicianDashboard() {
 
   return (
     <div className="space-y-6 animate-slideUp font-sans pb-16">
+      {/* Toast Feedback */}
+      {toastMessage && (
+        <div className="fixed top-20 right-6 z-50 p-4 rounded-2xl bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-xl flex items-center gap-2.5 text-xs font-bold animate-in slide-in-from-top-3">
+          <CheckCircle2 size={18} className="text-emerald-600" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
       {/* Cabecera Técnica del Laboratorio */}
       <div className="bg-white p-6 sm:p-7 rounded-3xl border border-slate-200/80 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-6">
         <div>
@@ -308,12 +349,20 @@ export default function TechnicianDashboard() {
               const tiempoEspera = getTiempoEspera(ord.createdAt);
               const assignedToMe = isOrderAssignedToMe(ord);
               const isAdmin = currentUser?.rol === 'ADMINISTRADOR';
-              const canEditThisOrder = assignedToMe || isAdmin;
-              const hasPendingRequest = ord.solicitud_edicion_estado === 'PENDIENTE';
-              const myPending = hasPendingRequest && (
-                ord.solicitud_edicion_tecnico_id === currentUser?.id ||
-                ord.solicitud_edicion_tecnico_nombre === currentUser?.nombre_completo
+
+              const sol = ord.solicitud_asignacion || (ord.solicitud_edicion_estado ? {
+                estado: ord.solicitud_edicion_estado,
+                tecnico_id: ord.solicitud_edicion_tecnico_id,
+                tecnico_nombre: ord.solicitud_edicion_tecnico_nombre
+              } : null);
+
+              const isPending = sol?.estado === 'PENDIENTE';
+              const isMyPending = isPending && (
+                String(sol.tecnico_id) === String(currentUser?.id) ||
+                (currentUser?.nombre_completo && sol.tecnico_nombre &&
+                 currentUser.nombre_completo.toLowerCase() === sol.tecnico_nombre.toLowerCase())
               );
+              const isOtherPending = isPending && !isMyPending;
 
               return (
                 <div
@@ -340,26 +389,29 @@ export default function TechnicianDashboard() {
                          ord.estado === 'ENTREGADO' ? 'Entregado' : 'Pendiente Diagnóstico'}
                       </span>
 
-                      {/* Asignación de técnico */}
+                      {/* Badges de Asignación */}
                       {assignedToMe ? (
-                        <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                        <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1 shadow-xs">
                           <CheckCircle2 size={11} className="text-emerald-600" />
-                          <span>Asignada a Mí (Edición Habilitada)</span>
+                          <span>Asignada a ti</span>
+                        </span>
+                      ) : isMyPending ? (
+                        <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 animate-pulse">
+                          <Clock size={11} className="text-amber-700" />
+                          <span>Esperando Aprobación</span>
+                        </span>
+                      ) : isOtherPending ? (
+                        <span className="text-[10px] font-bold px-2.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1">
+                          <Clock size={11} className="text-amber-600" />
+                          <span>Solicitada por: {sol.tecnico_nombre}</span>
                         </span>
                       ) : ord.tecnico_nombre_manual ? (
                         <span className="text-[10px] font-bold px-2.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
                           Técnico: <strong className="text-gray-900">{ord.tecnico_nombre_manual}</strong>
                         </span>
                       ) : (
-                        <span className="text-[10px] font-bold px-2.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
-                          Sin Asignar
-                        </span>
-                      )}
-
-                      {/* Badge si hay solicitud pendiente */}
-                      {myPending && (
-                        <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 animate-pulse">
-                          ⏳ Solicitud de Edición Enviada
+                        <span className="text-[10px] font-bold px-2.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                          Disponible para Asignación
                         </span>
                       )}
                     </div>
@@ -387,30 +439,82 @@ export default function TechnicianDashboard() {
                     </div>
                   </div>
 
-                  {/* Botones de Acción: Diagnosticar vs Ver Nota */}
-                  <div className="shrink-0 flex items-center justify-end gap-2">
-                    {canEditThisOrder ? (
+                  {/* Botones Dinámicos de Acción */}
+                  <div className="shrink-0 flex items-center justify-end gap-2 flex-wrap">
+                    {/* Caso 1: Asignada a este técnico (o Admin) -> Botón verde destacado [ Diagnosticar Equipos ] */}
+                    {(assignedToMe || isAdmin) ? (
                       <button
                         type="button"
                         id={`btn-diagnosticar-equipo-${ord.id}`}
                         onClick={() => router.push(`/tecnico/diagnostico/${ord.id}`)}
-                        className="w-full sm:w-auto px-5 py-3 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 active:scale-[0.98] text-white font-black text-xs sm:text-sm rounded-xl shadow-md shadow-red-600/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
+                        className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-black text-xs sm:text-sm rounded-xl shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
                       >
                         <Wrench size={16} />
                         <span>Diagnosticar Equipos</span>
                         <ArrowRight size={15} />
                       </button>
-                    ) : (
+                    ) : isMyPending ? (
+                      /* Caso 2: Solicitud enviada por el usuario actual -> Botón deshabilitado amarillo/ámbar con reloj/spinner */
                       <button
                         type="button"
-                        id={`btn-ver-orden-${ord.id}`}
-                        onClick={() => router.push(`/tecnico/diagnostico/${ord.id}`)}
-                        className="w-full sm:w-auto px-5 py-3 bg-white hover:bg-slate-50 border border-slate-300 active:scale-[0.98] text-gray-800 font-bold text-xs sm:text-sm rounded-xl shadow-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+                        disabled
+                        id={`btn-esperando-aprobacion-${ord.id}`}
+                        className="w-full sm:w-auto px-4 py-2.5 bg-amber-100 border border-amber-300 text-amber-900 font-bold text-xs sm:text-sm rounded-xl shadow-xs flex items-center justify-center gap-2 cursor-not-allowed opacity-95"
                       >
-                        <Eye size={16} className="text-navy" />
-                        <span>Ver Nota / Solicitar Permiso</span>
-                        <ArrowRight size={15} className="text-gray-400" />
+                        <RefreshCw size={15} className="animate-spin text-amber-700" />
+                        <span>Solicitud Enviada - Esperando Aprobación</span>
                       </button>
+                    ) : isOtherPending ? (
+                      /* Caso 3: Solicitud de otro técnico */
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled
+                          className="w-full sm:w-auto px-4 py-2.5 bg-slate-100 border border-slate-300 text-slate-500 font-bold text-xs sm:text-sm rounded-xl shadow-xs flex items-center justify-center gap-2 cursor-not-allowed"
+                        >
+                          <Clock size={15} />
+                          <span>Solicitada por {sol?.tecnico_nombre || 'otro técnico'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => router.push(`/tecnico/diagnostico/${ord.id}`)}
+                          className="p-2.5 bg-white hover:bg-slate-100 border border-slate-200 text-gray-600 rounded-xl transition-all cursor-pointer"
+                          title="Ver nota en modo consulta"
+                        >
+                          <Eye size={16} />
+                        </button>
+                      </div>
+                    ) : (
+                      /* Caso 4: solicitud_asignacion == null -> Botón azul [ Solicitar Asignación ] */
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          id={`btn-solicitar-asignacion-${ord.id}`}
+                          disabled={requestingId === ord.id}
+                          onClick={() => handleRequestAssignment(ord)}
+                          className="w-full sm:w-auto px-5 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white font-black text-xs sm:text-sm rounded-xl shadow-md shadow-blue-600/20 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-60"
+                        >
+                          {requestingId === ord.id ? (
+                            <>
+                              <RefreshCw size={15} className="animate-spin" />
+                              <span>Enviando...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Wrench size={15} />
+                              <span>Solicitar Asignación</span>
+                            </>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => router.push(`/tecnico/diagnostico/${ord.id}`)}
+                          className="p-2.5 bg-white hover:bg-slate-100 border border-slate-200 text-gray-600 rounded-xl transition-all cursor-pointer"
+                          title="Ver nota de ingreso"
+                        >
+                          <Eye size={16} />
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>

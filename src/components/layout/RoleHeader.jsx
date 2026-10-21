@@ -8,6 +8,7 @@ import {
   Home, List, Users, Search, PlusSquare, ClipboardList, Settings, Package, Sliders
 } from 'lucide-react';
 import UserProfileModal from '@/components/auth/UserProfileModal';
+import NotificationsBell from '@/components/layout/NotificationsBell';
 
 const ICON_MAP = {
   home: Home,
@@ -205,6 +206,13 @@ export default function RoleHeader({ navItems = [], roleTitle = 'Sistema ERP' })
 
         {/* User Actions */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <NotificationsBell 
+            userRole={userRole || user?.rol} 
+            onActionToast={(msg) => {
+              setToastMessage(msg);
+              setTimeout(() => setToastMessage(''), 4000);
+            }} 
+          />
           <div className="hidden sm:flex items-center gap-2.5 bg-gray-50 pl-1.5 pr-2 py-1.5 rounded-full border border-gray-200/80 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => setIsProfileModalOpen(true)} title="Ver mi perfil">
             <div suppressHydrationWarning className="w-8 h-8 rounded-full bg-gradient-to-br from-navy-light to-navy flex items-center justify-center text-white font-bold text-xs shadow-sm">
               {initials(user?.nombre_completo)}
