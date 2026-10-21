@@ -267,7 +267,7 @@ export const SearchRepository = {
       try {
         let q = supabase
           .from('ordenes_servicio')
-          .select('*, clientes (razon_social, nit_ci, telefono, email, persona_contacto), orden_equipos:orden_equipos!orden_equipos_orden_id_fkey (*)', { count: 'exact' })
+          .select('*, clientes (razon_social, nit_ci, telefono, email, persona_contacto), orden_equipos:orden_equipos!orden_equipos_orden_id_fkey (*, equipo_evidencias (*))', { count: 'exact' })
           .order('creado_en', { ascending: false });
 
         if (filters.estado && filters.estado !== 'TODOS') {
@@ -309,7 +309,23 @@ export const SearchRepository = {
             cliente_email: o.clientes?.email || '',
             persona_contacto: o.clientes?.persona_contacto || '',
             total_equipos: o.orden_equipos?.length || 0,
-            equipos: o.orden_equipos || []
+            equipos: (o.orden_equipos || []).map(eq => {
+              const evRows = eq.equipo_evidencias || [];
+              const recImgs = evRows
+                .filter(ev => String(ev.etapa || 'RECEPCION').toUpperCase() === 'RECEPCION')
+                .map(ev => ({ id: ev.id, url: ev.url_archivo, url_archivo: ev.url_archivo, name: ev.nombre_archivo, nombre_archivo: ev.nombre_archivo, etapa: 'RECEPCION' }));
+              const diagImgs = evRows
+                .filter(ev => String(ev.etapa || '').toUpperCase() === 'DIAGNOSTICO')
+                .map(ev => ({ id: ev.id, url: ev.url_archivo, url_archivo: ev.url_archivo, name: ev.nombre_archivo, nombre_archivo: ev.nombre_archivo, etapa: 'DIAGNOSTICO' }));
+              return {
+                ...eq,
+                imagenes: recImgs.length > 0 ? recImgs : evRows.map(ev => ({ id: ev.id, url: ev.url_archivo, url_archivo: ev.url_archivo, name: ev.nombre_archivo, nombre_archivo: ev.nombre_archivo, etapa: ev.etapa })),
+                imagenesRecepcion: recImgs,
+                imagenesInternas: diagImgs,
+                imagenesDiagnostico: diagImgs,
+                evidencias: evRows
+              };
+            })
           }));
 
           return {

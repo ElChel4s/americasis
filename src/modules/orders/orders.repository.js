@@ -5,6 +5,70 @@ import { numeroALetras } from '../../lib/common/numero-a-letras';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const sanitizeUuid = (val) => (typeof val === 'string' && UUID_REGEX.test(val)) ? val : null;
 
+/**
+ * Inserta evidencias fotográficas en public.equipo_evidencias para un equipo en Supabase.
+ * Soporta fotos en formato base64 Data URL o URL pública con logs de depuración.
+ */
+async function syncEquipoEvidenciasSupabase(ordenId, equipoId, fotos = []) {
+  if (!supabase || !equipoId) return [];
+  if (!Array.isArray(fotos) || fotos.length === 0) return [];
+
+  const validOrdenId = sanitizeUuid(ordenId);
+  const inserted = [];
+
+  for (const foto of fotos) {
+    if (!foto) continue;
+    const urlArchivo = foto.url_archivo || foto.url || foto.dataUrl;
+    if (!urlArchivo || typeof urlArchivo !== 'string' || urlArchivo.length < 20) continue;
+
+    const nombreArchivo = foto.nombre_archivo || foto.name || `evidencia_${Date.now()}_${inserted.length}.webp`;
+    let etapa = (foto.etapa || 'RECEPCION').toUpperCase();
+    if (etapa === 'INTERNA' || etapa === 'INTERNO') etapa = 'DIAGNOSTICO';
+    if (etapa !== 'DIAGNOSTICO') etapa = 'RECEPCION';
+
+    console.log("Insertando foto en equipo_evidencias:", foto);
+
+    try {
+      // Evitar duplicar exactamente la misma foto para este equipo si ya fue guardada
+      const { data: existing } = await supabase
+        .from('equipo_evidencias')
+        .select('id')
+        .eq('equipo_id', equipoId)
+        .eq('nombre_archivo', nombreArchivo)
+        .maybeSingle();
+
+      if (existing?.id) {
+        inserted.push(existing);
+        continue;
+      }
+
+      const { data: newEv, error: errorFoto } = await supabase
+        .from('equipo_evidencias')
+        .insert({
+          orden_id: validOrdenId || null,
+          equipo_id: equipoId,
+          nombre_archivo: nombreArchivo,
+          url_archivo: urlArchivo,
+          etapa: etapa,
+          es_webp: true,
+          mime_type: 'image/webp'
+        })
+        .select()
+        .single();
+
+      if (errorFoto) {
+        console.error("Error insertando foto en equipo_evidencias:", errorFoto);
+      } else if (newEv) {
+        inserted.push(newEv);
+      }
+    } catch (err) {
+      console.warn("Excepción insertando foto en equipo_evidencias:", err.message);
+    }
+  }
+
+  return inserted;
+}
+
 export const OrdersRepository = {
   /**
    * Crea una orden de servicio con todos sus equipos y accesorios.
@@ -268,6 +332,32 @@ export const OrdersRepository = {
         }));
 
         await supabase.from('equipo_accesorios_recepcion').insert(accRows);
+      }
+
+      // Insertar fotos en public.equipo_evidencias (RECEPCION y DIAGNOSTICO)
+      const fotosParaGuardar = [];
+      const seenFotoUrls = new Set();
+      const pushFoto = (f, defaultEtapa = 'RECEPCION') => {
+        if (!f) return;
+        const u = f.url_archivo || f.url || f.dataUrl;
+        if (!u || seenFotoUrls.has(u)) return;
+        seenFotoUrls.add(u);
+        fotosParaGuardar.push({
+          ...f,
+          url_archivo: u,
+          nombre_archivo: f.nombre_archivo || f.name || `evidencia_${Date.now()}_${fotosParaGuardar.length}.webp`,
+          etapa: f.etapa || defaultEtapa
+        });
+      };
+
+      (eq.imagenesRecepcion || []).forEach(f => pushFoto(f, 'RECEPCION'));
+      (eq.imagenes || []).forEach(f => pushFoto(f, f.etapa || 'RECEPCION'));
+      (eq.imagenesDiagnostico || []).forEach(f => pushFoto(f, 'DIAGNOSTICO'));
+      (eq.imagenesInternas || []).forEach(f => pushFoto(f, 'DIAGNOSTICO'));
+      (eq.evidencias || []).forEach(f => pushFoto(f, f.etapa || 'RECEPCION'));
+
+      if (fotosParaGuardar.length > 0) {
+        await syncEquipoEvidenciasSupabase(orden.id, ordenEquipo.id, fotosParaGuardar);
       }
 
       equipos.push(ordenEquipo);
@@ -538,6 +628,31 @@ export const OrdersRepository = {
       await supabase.from('equipo_repuestos_cotizados').insert(repRows);
     }
 
+    // 3.1 Sincronizar fotos de diagnóstico en public.equipo_evidencias
+    const diagFotos = [];
+    const seenDiagUrls = new Set();
+    const pushDiagFoto = (f, defaultEtapa = 'DIAGNOSTICO') => {
+      if (!f) return;
+      const u = f.url_archivo || f.url || f.dataUrl;
+      if (!u || seenDiagUrls.has(u)) return;
+      seenDiagUrls.add(u);
+      diagFotos.push({
+        ...f,
+        url_archivo: u,
+        nombre_archivo: f.nombre_archivo || f.name || `diag_${Date.now()}_${diagFotos.length}.webp`,
+        etapa: f.etapa || defaultEtapa
+      });
+    };
+
+    (diagnosisData.imagenesDiagnostico || []).forEach(f => pushDiagFoto(f, 'DIAGNOSTICO'));
+    (diagnosisData.imagenesInternas || []).forEach(f => pushDiagFoto(f, 'DIAGNOSTICO'));
+    (diagnosisData.imagenes || []).forEach(f => pushDiagFoto(f, f.etapa || 'DIAGNOSTICO'));
+    (diagnosisData.evidencias || []).forEach(f => pushDiagFoto(f, f.etapa || 'DIAGNOSTICO'));
+
+    if (diagFotos.length > 0) {
+      await syncEquipoEvidenciasSupabase(resolvedOrderId, resolvedEquipoId, diagFotos);
+    }
+
     // 4. Recalcular subtotales
     const { data: allEqs } = await supabase
       .from('orden_equipos')
@@ -627,17 +742,51 @@ export const OrdersRepository = {
             .eq('orden_id', resolvedOrderId)
             .order('orden_indice', { ascending: true });
 
-          orden.equipos = (equipos || []).map(eq => ({
-            ...eq,
-            accesorios: eq.equipo_accesorios_recepcion || [],
-            fallas: eq.equipo_fallas || [],
-            repuestos: eq.equipo_repuestos_cotizados || [],
-            imagenes: (eq.equipo_evidencias || []).map(ev => ({
+          orden.equipos = (equipos || []).map(eq => {
+            const evRows = eq.equipo_evidencias || [];
+            const recImgs = evRows
+              .filter(ev => String(ev.etapa || 'RECEPCION').toUpperCase() === 'RECEPCION')
+              .map(ev => ({
+                id: ev.id,
+                url: ev.url_archivo,
+                url_archivo: ev.url_archivo,
+                name: ev.nombre_archivo,
+                nombre_archivo: ev.nombre_archivo,
+                etapa: 'RECEPCION'
+              }));
+
+            const diagImgs = evRows
+              .filter(ev => String(ev.etapa || '').toUpperCase() === 'DIAGNOSTICO')
+              .map(ev => ({
+                id: ev.id,
+                url: ev.url_archivo,
+                url_archivo: ev.url_archivo,
+                name: ev.nombre_archivo,
+                nombre_archivo: ev.nombre_archivo,
+                etapa: 'DIAGNOSTICO'
+              }));
+
+            const allImgs = evRows.map(ev => ({
+              id: ev.id,
               url: ev.url_archivo,
-              etapa: ev.etapa,
-              name: ev.nombre_archivo
-            }))
-          }));
+              url_archivo: ev.url_archivo,
+              name: ev.nombre_archivo,
+              nombre_archivo: ev.nombre_archivo,
+              etapa: ev.etapa
+            }));
+
+            return {
+              ...eq,
+              accesorios: eq.equipo_accesorios_recepcion || [],
+              fallas: eq.equipo_fallas || [],
+              repuestos: eq.equipo_repuestos_cotizados || [],
+              imagenes: recImgs.length > 0 ? recImgs : allImgs,
+              imagenesRecepcion: recImgs,
+              imagenesInternas: diagImgs,
+              imagenesDiagnostico: diagImgs,
+              evidencias: allImgs
+            };
+          });
 
           orden.razon_social = orden.clientes?.razon_social;
           orden.nit_ci = orden.clientes?.nit_ci;
@@ -694,7 +843,14 @@ export const OrdersRepository = {
       try {
         let queryBuilder = supabase
           .from('ordenes_servicio')
-          .select('*, clientes (razon_social, nit_ci), orden_equipos:orden_equipos!orden_equipos_orden_id_fkey (*)')
+          .select(`
+            *,
+            clientes (razon_social, nit_ci),
+            orden_equipos:orden_equipos!orden_equipos_orden_id_fkey (
+              *,
+              equipo_evidencias (*)
+            )
+          `)
           .not('estado', 'in', '("ENTREGADO","ANULADO")')
           .order('creado_en', { ascending: false });
 
@@ -713,7 +869,23 @@ export const OrdersRepository = {
             razon_social: o.clientes?.razon_social || 'Consumidor Final',
             nit_ci: o.clientes?.nit_ci || '',
             total_equipos: o.orden_equipos?.length || 0,
-            equipos: o.orden_equipos || []
+            equipos: (o.orden_equipos || []).map(eq => {
+              const evRows = eq.equipo_evidencias || [];
+              const recImgs = evRows
+                .filter(ev => String(ev.etapa || 'RECEPCION').toUpperCase() === 'RECEPCION')
+                .map(ev => ({ id: ev.id, url: ev.url_archivo, name: ev.nombre_archivo, etapa: 'RECEPCION' }));
+              const diagImgs = evRows
+                .filter(ev => String(ev.etapa || '').toUpperCase() === 'DIAGNOSTICO')
+                .map(ev => ({ id: ev.id, url: ev.url_archivo, name: ev.nombre_archivo, etapa: 'DIAGNOSTICO' }));
+              return {
+                ...eq,
+                imagenes: recImgs.length > 0 ? recImgs : evRows.map(ev => ({ id: ev.id, url: ev.url_archivo, name: ev.nombre_archivo, etapa: ev.etapa })),
+                imagenesRecepcion: recImgs,
+                imagenesInternas: diagImgs,
+                imagenesDiagnostico: diagImgs,
+                evidencias: evRows
+              };
+            })
           }));
         }
       } catch (err) {
@@ -1017,6 +1189,32 @@ export const OrdersRepository = {
                   otros_descripcion: acc.otros_descripcion || null
                 }));
                 await supabase.from('equipo_accesorios_recepcion').insert(accRows);
+              }
+
+              // Sincronizar evidencias fotográficas (RECEPCION y DIAGNOSTICO)
+              const eqFotos = [];
+              const seenUrls = new Set();
+              const pushFoto = (f, defaultEtapa = 'RECEPCION') => {
+                if (!f) return;
+                const u = typeof f === 'string' ? f : (f.url_archivo || f.url || f.dataUrl);
+                if (!u || seenUrls.has(u)) return;
+                seenUrls.add(u);
+                eqFotos.push({
+                  ...(typeof f === 'object' ? f : {}),
+                  url_archivo: u,
+                  nombre_archivo: f?.nombre_archivo || f?.name || `evidencia_${Date.now()}_${eqFotos.length}.webp`,
+                  etapa: f?.etapa || defaultEtapa
+                });
+              };
+
+              (eq.imagenesRecepcion || []).forEach(f => pushFoto(f, 'RECEPCION'));
+              (eq.imagenes || []).forEach(f => pushFoto(f, f?.etapa || 'RECEPCION'));
+              (eq.imagenesDiagnostico || []).forEach(f => pushFoto(f, 'DIAGNOSTICO'));
+              (eq.imagenesInternas || []).forEach(f => pushFoto(f, 'DIAGNOSTICO'));
+              (eq.evidencias || []).forEach(f => pushFoto(f, f?.etapa || 'RECEPCION'));
+
+              if (eqFotos.length > 0) {
+                await syncEquipoEvidenciasSupabase(resolvedOrderId, savedEqId, eqFotos);
               }
             }
           }

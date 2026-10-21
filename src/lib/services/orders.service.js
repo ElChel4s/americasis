@@ -520,49 +520,86 @@ export const OrdersService = {
 
     // 4. Guardado prioritario y obligatorio en la Base de Datos Central (Supabase / Postgres)
     try {
-      const res = await fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          order: {
-            sucursal_id: data.sucursal_id || 'a0000000-0000-0000-0000-000000000001',
-            cliente_id: data.cliente_id || null,
-            razon_social: nuevaOrden.razon_social,
-            recepcionista_nombre_manual: data.recepcionista_nombre_manual || 'Recepción Mostrador',
-            usuario_tecnico_id: nuevaOrden.usuario_tecnico_id || data.tecnicoAsignadoId || null,
-            tecnico_nombre_manual: nuevaOrden.tecnico_nombre_manual || data.tecnicoNombre || null,
-            estado: nuevaOrden.estado,
-            moneda: data.moneda || 'BOB',
-            tasa_cambio: data.tasa_cambio || 6.96,
-            notas_internas: data.notas_internas || null,
-          },
-          equipos: sanitizedEquipos.map(eq => ({
-            marca: eq.marca,
-            modelo: eq.modelo,
-            numero_serie: eq.numero_serie,
-            banda: eq.banda,
-            falla_declarada_cliente: eq.falla_declarada_cliente,
-            costo_servicio: eq.costo_servicio,
-            accesorios: eq.accesorios
-          }))
-        })
-      });
+      const isExistingUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(data.id || ''));
+      const equiposPayload = sanitizedEquipos.map(eq => ({
+        id: eq.id,
+        marca: eq.marca,
+        modelo: eq.modelo,
+        numero_serie: eq.numero_serie,
+        banda: eq.banda,
+        falla_declarada_cliente: eq.falla_declarada_cliente,
+        costo_servicio: eq.costo_servicio,
+        accesorios: eq.accesorios,
+        accesoriosRecepcion: eq.accesoriosRecepcion,
+        imagenes: eq.imagenes || eq.imagenesRecepcion || [],
+        imagenesRecepcion: eq.imagenesRecepcion || eq.imagenes || [],
+        imagenesDiagnostico: eq.imagenesDiagnostico || eq.imagenesInternas || [],
+        imagenesInternas: eq.imagenesInternas || eq.imagenesDiagnostico || [],
+        evidencias: eq.evidencias || []
+      }));
 
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success && json.data?.orden) {
-          const srv = json.data.orden;
-          nuevaOrden.id = srv.id;
-          nuevaOrden.numero_orden = srv.numero_orden || nuevaOrden.numero_orden;
-          nuevaOrden.ordenServicio = nuevaOrden.numero_orden;
-          if (Array.isArray(json.data.equipos) && json.data.equipos.length > 0) {
-            nuevaOrden.equipos = json.data.equipos.map((se, idx) => ({
-              ...(sanitizedEquipos[idx] || {}),
-              id: se.id,
-              orden_id: se.orden_id
-            }));
+      if (isExistingUuid) {
+        const updateRes = await fetch(`/api/orders/${data.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            reception: {
+              cliente_id: data.cliente_id || null,
+              razon_social: nuevaOrden.razon_social,
+              recepcionista_nombre_manual: data.recepcionista_nombre_manual || 'Recepción Mostrador',
+              usuario_tecnico_id: nuevaOrden.usuario_tecnico_id || data.tecnicoAsignadoId || null,
+              tecnico_nombre_manual: nuevaOrden.tecnico_nombre_manual || data.tecnicoNombre || null,
+              moneda: data.moneda || 'BOB',
+              tasa_cambio: data.tasa_cambio || 6.96,
+              notas_internas: data.notas_internas || null,
+              equipos: equiposPayload
+            }
+          })
+        });
+
+        if (updateRes.ok) {
+          const updateJson = await updateRes.json();
+          if (updateJson.success && updateJson.data) {
+            console.log('[OrdersService] Orden existente actualizada con evidencias en Supabase:', data.id);
           }
-          console.log('[OrdersService] Orden guardada y confirmada en Supabase:', srv.id, srv.numero_orden);
+        }
+      } else {
+        const res = await fetch('/api/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            order: {
+              sucursal_id: data.sucursal_id || 'a0000000-0000-0000-0000-000000000001',
+              cliente_id: data.cliente_id || null,
+              razon_social: nuevaOrden.razon_social,
+              recepcionista_nombre_manual: data.recepcionista_nombre_manual || 'Recepción Mostrador',
+              usuario_tecnico_id: nuevaOrden.usuario_tecnico_id || data.tecnicoAsignadoId || null,
+              tecnico_nombre_manual: nuevaOrden.tecnico_nombre_manual || data.tecnicoNombre || null,
+              estado: nuevaOrden.estado,
+              moneda: data.moneda || 'BOB',
+              tasa_cambio: data.tasa_cambio || 6.96,
+              notas_internas: data.notas_internas || null,
+            },
+            equipos: equiposPayload
+          })
+        });
+
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && json.data?.orden) {
+            const srv = json.data.orden;
+            nuevaOrden.id = srv.id;
+            nuevaOrden.numero_orden = srv.numero_orden || nuevaOrden.numero_orden;
+            nuevaOrden.ordenServicio = nuevaOrden.numero_orden;
+            if (Array.isArray(json.data.equipos) && json.data.equipos.length > 0) {
+              nuevaOrden.equipos = json.data.equipos.map((se, idx) => ({
+                ...(sanitizedEquipos[idx] || {}),
+                id: se.id,
+                orden_id: se.orden_id
+              }));
+            }
+            console.log('[OrdersService] Orden guardada y confirmada en Supabase:', srv.id, srv.numero_orden);
+          }
         }
       }
     } catch (netErr) {
@@ -607,13 +644,20 @@ export const OrdersService = {
             notas_internas: localOrder.notas_internas || null,
           },
           equipos: (localOrder.equipos || []).map(eq => ({
+            id: eq.id,
             marca: eq.marca || 'Motorola',
             modelo: eq.modelo || '',
             numero_serie: eq.numero_serie || eq.serie || `SER-${Date.now()}`,
             banda: eq.banda || 'VHF',
             falla_declarada_cliente: eq.falla_declarada_cliente || '',
             costo_servicio: eq.costo_servicio || 0,
-            accesorios: eq.accesorios || []
+            accesorios: eq.accesorios || [],
+            accesoriosRecepcion: eq.accesoriosRecepcion || {},
+            imagenes: eq.imagenes || eq.imagenesRecepcion || [],
+            imagenesRecepcion: eq.imagenesRecepcion || eq.imagenes || [],
+            imagenesDiagnostico: eq.imagenesDiagnostico || eq.imagenesInternas || [],
+            imagenesInternas: eq.imagenesInternas || eq.imagenesDiagnostico || [],
+            evidencias: eq.evidencias || []
           }))
         })
       });
@@ -678,7 +722,12 @@ export const OrdersService = {
             fallas: eq.fallas || [],
             repuestos: eq.repuestos || [],
             tecnico_nombre_manual: eq.tecnico_nombre_manual || null,
-            finalizar: finalizar
+            finalizar: finalizar,
+            imagenes: eq.imagenes || [],
+            imagenesRecepcion: eq.imagenesRecepcion || eq.imagenes || [],
+            imagenesDiagnostico: eq.imagenesDiagnostico || eq.imagenesInternas || [],
+            imagenesInternas: eq.imagenesInternas || eq.imagenesDiagnostico || [],
+            evidencias: eq.evidencias || []
           }
         };
 
