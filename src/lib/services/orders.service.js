@@ -1439,13 +1439,133 @@ export const OrdersService = {
 
   // Aliases para retrocompatibilidad
   requestTechnicianPermission: async (orderId, technicianUser) => {
-    return await OrdersService.solicitarAsignacion(orderId, technicianUser);
+    return await OrdersService.tomarYDiagnosticar(orderId, technicianUser);
   },
 
   respondTechnicianPermission: async (orderId, approve = true) => {
     return approve 
       ? await OrdersService.aprobarAsignacion(orderId) 
       : await OrdersService.rechazarAsignacion(orderId);
+  },
+
+  /**
+   * Técnico toma la orden directamente sin traba de aprobación:
+   * 1. Asigna inmediatamente al técnico en sesión (tecnico_asignado_id: user.id, tecnico_nombre: user.nombre_completo)
+   * 2. Actualiza el estado a EN_DIAGNOSTICO tanto en servidor/BD como en localStorage
+   * 3. Retorna la orden actualizada para permitir redirección inmediata a /tecnico/diagnostico/[id]
+   */
+  tomarYDiagnosticar: async (orderId, technicianUser) => {
+    if (typeof window === 'undefined') return null;
+
+    const techId = technicianUser?.id || 'usr-tecnico';
+    const techName = technicianUser?.nombre_completo || 'Técnico Especialista';
+
+    const orders = await OrdersService.getOrders();
+    const index = orders.findIndex(o => String(o.id) === String(orderId) || String(o.numero_orden) === String(orderId));
+
+    const solicitudAprobada = {
+      tecnico_id: techId,
+      tecnico_nombre: techName,
+      fecha_solicitud: new Date().toISOString(),
+      fecha_aprobacion: new Date().toISOString(),
+      estado: 'APROBADA'
+    };
+
+    let updatedOrder = null;
+    if (index >= 0) {
+      const current = orders[index];
+      orders[index] = {
+        ...current,
+        tecnico_asignado_id: techId,
+        usuario_tecnico_id: techId,
+        tecnicoAsignadoId: techId,
+        tecnico_nombre: techName,
+        tecnico_nombre_manual: techName,
+        tecnicoNombre: techName,
+        estado: 'EN_DIAGNOSTICO',
+        solicitud_asignacion: solicitudAprobada,
+        solicitud_edicion_estado: 'APROBADA',
+        solicitud_edicion_tecnico_id: techId,
+        solicitud_edicion_tecnico_nombre: techName,
+        condiciones: {
+          ...(current.condiciones || {}),
+          tecnicoFirmanteNombre: techName
+        },
+        condiciones_comerciales_json: {
+          ...(current.condiciones_comerciales_json || {}),
+          tecnicoFirmanteNombre: techName,
+          solicitud_asignacion: solicitudAprobada,
+          solicitud_edicion: solicitudAprobada
+        },
+        updatedAt: new Date().toISOString()
+      };
+
+      safeSaveLocalStorage(orders);
+      updatedOrder = rehydrateOrder(orders[index]);
+      broadcastOrdersUpdate(updatedOrder);
+    }
+
+    // Persistencia inmediata en backend / Supabase
+    try {
+      await fetch(`/api/orders/${orderId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          estado: 'EN_DIAGNOSTICO',
+          usuario_tecnico_id: techId,
+          tecnico_nombre_manual: techName,
+          tecnico_asignado_id: techId,
+          condiciones_comerciales_json: {
+            solicitud_asignacion: solicitudAprobada,
+            solicitud_edicion: solicitudAprobada,
+            tecnicoFirmanteNombre: techName
+          }
+        })
+      });
+    } catch (e) {
+      console.warn('[OrdersService] Error sincronizando tomarYDiagnosticar en servidor:', e);
+    }
+
+    return updatedOrder || { id: orderId, estado: 'EN_DIAGNOSTICO', tecnico_asignado_id: techId, tecnico_nombre: techName };
+  },
+
+  /**
+   * Elimina una evidencia fotográfica de forma reactiva en localStorage,
+   * y envía la petición a Supabase Storage y public.equipo_evidencias
+   */
+  deleteEvidenceFoto: async (foto) => {
+    if (!foto) return;
+    const fotoId = foto.id;
+    const fotoUrl = foto.url || foto.url_archivo || '';
+
+    // 1. Supabase directo si está inicializado en cliente
+    try {
+      const { supabase } = await import('@/lib/config/supabase-client');
+      if (supabase) {
+        if (fotoId && typeof fotoId === 'string' && fotoId.length > 20) {
+          await supabase.from('equipo_evidencias').delete().eq('id', fotoId);
+        }
+        if (fotoUrl && fotoUrl.includes('/evidencias-radios/')) {
+          const marker = '/evidencias-radios/';
+          const markerPos = fotoUrl.indexOf(marker);
+          if (markerPos >= 0) {
+            const objectPath = decodeURIComponent(fotoUrl.substring(markerPos + marker.length).split('?')[0]);
+            if (objectPath) {
+              await supabase.storage.from('evidencias-radios').remove([objectPath]);
+            }
+          }
+        }
+      }
+    } catch (sbErr) {
+      console.warn('[OrdersService] Error eliminando evidencia en Supabase Storage:', sbErr);
+    }
+
+    // 2. Notificar al endpoint REST
+    if (fotoId) {
+      try {
+        await fetch(`/api/evidences/${fotoId}`, { method: 'DELETE' });
+      } catch (apiErr) {}
+    }
   },
 
   /**

@@ -108,40 +108,72 @@ export default function Step1Reception({
     }
     
     setIsOptimizing(true);
+    const safetyTimer = setTimeout(() => {
+      setIsOptimizing(false);
+    }, 15000);
+
     try {
       const { compressToSafeEvidence } = await import('@/lib/utils/imageCompressor');
-      const currentImages = equipo.imagenes || [];
+      const currentImages = equipo.imagenes || equipo.imagenesRecepcion || [];
       const newItems = [];
       
       for (const file of Array.from(files)) {
-        const safeImg = await compressToSafeEvidence(file, {
-          etapa: 'RECEPCION',
-          name: file.name
-        });
-        newItems.push(safeImg);
+        try {
+          const safeImg = await compressToSafeEvidence(file, {
+            etapa: 'RECEPCION',
+            name: file.name,
+            equipoId: equipo.id,
+            ordenId: formData?.id
+          });
+          if (safeImg) newItems.push(safeImg);
+        } catch (fErr) {
+          console.warn('Error procesando foto:', fErr);
+        }
       }
       
-      const combined = [...currentImages, ...newItems];
-      updateEquipo(activeEquipoIndex, { 
-        imagenes: combined,
-        imagenesRecepcion: combined
-      });
+      if (newItems.length > 0) {
+        const combined = [...currentImages, ...newItems];
+        updateEquipo(activeEquipoIndex, { 
+          imagenes: combined,
+          imagenesRecepcion: combined
+        });
+
+        if (formData?.id) {
+          const updatedEquipos = [...(formData.equipos || [])];
+          updatedEquipos[activeEquipoIndex] = {
+            ...updatedEquipos[activeEquipoIndex],
+            imagenes: combined,
+            imagenesRecepcion: combined
+          };
+          OrdersService.updateOrderLocal(formData.id, {
+            ...formData,
+            equipos: updatedEquipos
+          });
+        }
+      }
     } catch (err) {
       console.error('Error optimizando imágenes en Step 1:', err);
       alert('Hubo un error al optimizar las imágenes: ' + (err.message || 'Error desconocido'));
     } finally {
+      clearTimeout(safetyTimer);
       setIsOptimizing(false);
     }
   };
 
   const handleCropComplete = async (croppedBlob, croppedUrl) => {
     setCropModalOpen(false);
+    setIsOptimizing(true);
+    const safetyTimer = setTimeout(() => {
+      setIsOptimizing(false);
+    }, 15000);
+
     try {
-      setIsOptimizing(true);
       const { compressToSafeEvidence } = await import('@/lib/utils/imageCompressor');
       const safeImg = await compressToSafeEvidence(croppedBlob, {
         etapa: 'RECEPCION',
-        name: `recepcion-${Date.now()}.webp`
+        name: `recepcion-${Date.now()}.webp`,
+        equipoId: equipo.id,
+        ordenId: formData?.id
       });
       const currentImages = equipo.imagenes || equipo.imagenesRecepcion || [];
       const combined = [...currentImages, safeImg];
@@ -149,10 +181,24 @@ export default function Step1Reception({
         imagenes: combined,
         imagenesRecepcion: combined
       });
+
+      if (formData?.id) {
+        const updatedEquipos = [...(formData.equipos || [])];
+        updatedEquipos[activeEquipoIndex] = {
+          ...updatedEquipos[activeEquipoIndex],
+          imagenes: combined,
+          imagenesRecepcion: combined
+        };
+        OrdersService.updateOrderLocal(formData.id, {
+          ...formData,
+          equipos: updatedEquipos
+        });
+      }
     } catch (err) {
       console.error('Error procesando imagen recortada:', err);
       alert('Error procesando foto recortada: ' + (err.message || 'Error desconocido'));
     } finally {
+      clearTimeout(safetyTimer);
       setIsOptimizing(false);
     }
   };
@@ -632,6 +678,18 @@ export default function Step1Reception({
                 </div>
               </button>
 
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                disabled={isOptimizing}
+                onChange={(e) => {
+                  handleImageSelect(e.target.files);
+                  e.target.value = '';
+                }}
+              />
               <button 
                 type="button"
                 onClick={() => fileInputRef.current?.click()}

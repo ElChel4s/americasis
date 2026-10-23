@@ -166,31 +166,310 @@ export const compressImage = async (fileOrSource, options = {}) => {
 };
 
 /**
- * Helper estandarizado para generar un objeto de evidencia seguro para el estado de la orden.
- * Retorna un objeto 100% serializable en JSON (sin objetos File crudos) y con tamaño verificado < 150 KB.
+ * Comprime y redimensiona una imagen a un Blob WebP estricto:
+ * - Resolución máxima: 1280px (conservando relación de aspecto)
+ * - Formato: image/webp
+ * - Calidad inicial: 0.7
+ * - Límite estricto de peso: < 200 KB
  */
-export const compressToSafeEvidence = async (fileOrSource, options = {}) => {
-  const { etapa = 'RECEPCION', name = '' } = options;
+export const compressToWebpBlob = async (fileOrSource, options = {}) => {
+  const {
+    maxWidth = 1280,
+    maxHeight = 1280,
+    quality = 0.7,
+    maxSizeBytes = 200 * 1024, // 200 KB estricto
+    timeoutMs = 12000
+  } = options;
 
-  const dataUrl = await compressImage(fileOrSource, {
-    maxWidth: 1000,
-    maxHeight: 1000,
-    quality: 0.7,
-    maxSizeBytes: MAX_SAFE_BYTES,
-    returnType: 'base64'
+  const compressPromise = new Promise((resolve, reject) => {
+    if (!fileOrSource) {
+      return reject(new Error('No se proporcionó ningún archivo de imagen.'));
+    }
+
+    const processImage = (img, defaultName = 'foto.webp') => {
+      let width = img.naturalWidth || img.width;
+      let height = img.naturalHeight || img.height;
+
+      if (!width || !height) {
+        return reject(new Error('No se pudieron leer las dimensiones de la imagen.'));
+      }
+
+      // Escalar dimensiones respetando aspect ratio (máximo 1280px)
+      if (width > height) {
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+      } else {
+        if (height > maxHeight) {
+          width = Math.round((width * maxHeight) / height);
+          height = maxHeight;
+        }
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+
+      if (!ctx) {
+        return reject(new Error('No se pudo inicializar Canvas 2D en el navegador.'));
+      }
+
+      ctx.drawImage(img, 0, 0, width, height);
+
+      let currentQuality = Math.min(Math.max(quality, 0.2), 0.9);
+      let attempts = 0;
+
+      const attemptToBlob = () => {
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) {
+              return reject(new Error('Error al generar Blob WebP desde Canvas.'));
+            }
+
+            // Si supera 200 KB y tenemos intentos, reducir calidad y escala
+            if (blob.size > maxSizeBytes && attempts < 3) {
+              attempts++;
+              currentQuality = Math.max(0.25, currentQuality * 0.75);
+
+              if (attempts >= 2 && (canvas.width > 600 || canvas.height > 600)) {
+                const nw = Math.round(canvas.width * 0.85);
+                const nh = Math.round(canvas.height * 0.85);
+                const tmp = document.createElement('canvas');
+                tmp.width = nw;
+                tmp.height = nh;
+                const tmpCtx = tmp.getContext('2d');
+                if (tmpCtx) {
+                  tmpCtx.drawImage(canvas, 0, 0, nw, nh);
+                  canvas.width = nw;
+                  canvas.height = nh;
+                  ctx.drawImage(tmp, 0, 0);
+                }
+              }
+              attemptToBlob();
+              return;
+            }
+
+            const dataUrl = canvas.toDataURL('image/webp', currentQuality);
+            resolve({
+              blob,
+              dataUrl,
+              sizeBytes: blob.size,
+              sizeKb: Math.round(blob.size / 1024),
+              width: canvas.width,
+              height: canvas.height,
+              fileName: defaultName
+            });
+          },
+          'image/webp',
+          currentQuality
+        );
+      };
+
+      attemptToBlob();
+    };
+
+    if (typeof fileOrSource === 'string' && fileOrSource.startsWith('data:')) {
+      const img = new Image();
+      img.onload = () => processImage(img);
+      img.onerror = () => reject(new Error('Error decodificando imagen base64.'));
+      img.src = fileOrSource;
+      return;
+    }
+
+    if (fileOrSource instanceof Blob || (typeof File !== 'undefined' && fileOrSource instanceof File)) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => processImage(img, fileOrSource.name || 'foto.webp');
+        img.onerror = () => reject(new Error('Error renderizando imagen seleccionada.'));
+        img.src = e.target.result;
+      };
+      reader.onerror = () => reject(new Error('Error leyendo archivo en disco.'));
+      reader.readAsDataURL(fileOrSource);
+      return;
+    }
+
+    return reject(new Error('Formato de imagen no soportado.'));
   });
 
-  const sizeBytes = getDataUrlSizeBytes(dataUrl);
-  const sizeKb = Math.round(sizeBytes / 1024);
-  const defaultName = typeof fileOrSource?.name === 'string' 
-    ? fileOrSource.name 
-    : `foto-${Date.now()}.webp`;
+  // Timeout guard para que nunca cuelgue el navegador
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Tiempo de espera agotado al comprimir imagen (Timeout).')), timeoutMs);
+  });
+
+  return Promise.race([compressPromise, timeoutPromise]);
+};
+
+/**
+ * Helper unificado: Comprime la foto a WebP (< 200 KB, max 1280px)
+ * y la sube de inmediato a Supabase Storage ('evidencias-radios') y registra en 'public.equipo_evidencias'.
+ * Con timeout estricto y fallback a Base64 para que la UI JAMÁS se quede colgada.
+ */
+export const uploadEvidencePhoto = async ({
+  fileOrSource,
+  equipoId,
+  ordenId = null,
+  etapa = 'RECEPCION',
+  name = ''
+}) => {
+  // 1. Compresión estricta Canvas WebP
+  const compressed = await compressToWebpBlob(fileOrSource, {
+    maxWidth: 1280,
+    maxHeight: 1280,
+    quality: 0.7,
+    maxSizeBytes: 200 * 1024,
+    timeoutMs: 12000
+  });
+
+  const { blob, dataUrl, sizeBytes, sizeKb } = compressed;
+  const eqIdClean = equipoId ? String(equipoId).replace(/[^a-zA-Z0-9_-]/g, '') : 'equipo';
+  const nombreArchivo = `${eqIdClean}_${Date.now()}.webp`;
+  const storagePath = `evidencias/${nombreArchivo}`;
+
+  let publicUrl = null;
+  let rowId = null;
+
+  // 2. Subida limpia a Supabase Storage en el cliente
+  try {
+    const { supabase } = await import('@/lib/config/supabase-client');
+    if (supabase) {
+      const uploadPromise = supabase.storage
+        .from('evidencias-radios')
+        .upload(storagePath, blob, {
+          contentType: 'image/webp',
+          upsert: true
+        });
+
+      const timeoutSupabase = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout Storage')), 10000)
+      );
+
+      const { data: uploadData, error: uploadError } = await Promise.race([uploadPromise, timeoutSupabase]);
+
+      if (!uploadError && uploadData) {
+        const { data: { publicUrl: pUrl } } = supabase.storage
+          .from('evidencias-radios')
+          .getPublicUrl(storagePath);
+
+        publicUrl = pUrl;
+      }
+    }
+  } catch (sbErr) {
+    console.warn('[imageCompressor] Subida directa Storage omitida o con error:', sbErr.message);
+  }
+
+  // 3. Inserción inmediata en public.equipo_evidencias si tenemos URL y equipo_id válido
+  const isUuid = (val) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+  const validEquipoUuid = isUuid(equipoId) ? equipoId : null;
+  const validOrdenUuid = isUuid(ordenId) ? ordenId : null;
+
+  if (publicUrl && validEquipoUuid) {
+    try {
+      const { supabase } = await import('@/lib/config/supabase-client');
+      if (supabase) {
+        const { data: newEv, error: insErr } = await supabase
+          .from('equipo_evidencias')
+          .insert({
+            equipo_id: validEquipoUuid,
+            orden_id: validOrdenUuid,
+            nombre_archivo: nombreArchivo,
+            url_archivo: publicUrl,
+            etapa: etapa || 'RECEPCION',
+            es_webp: true,
+            mime_type: 'image/webp',
+            tamano_bytes: sizeBytes,
+            storage_driver: 'SUPABASE'
+          })
+          .select()
+          .single();
+
+        if (newEv && !insErr) {
+          rowId = newEv.id;
+        }
+      }
+    } catch (dbErr) {
+      console.warn('[imageCompressor] Inserción directa en BD omitida:', dbErr.message);
+    }
+  }
+
+  // 4. Fallback API si Storage directo no dio URL
+  if (!publicUrl && validEquipoUuid) {
+    try {
+      const fd = new FormData();
+      fd.append('file', blob, nombreArchivo);
+      fd.append('equipo_id', validEquipoUuid);
+      if (validOrdenUuid) fd.append('orden_id', validOrdenUuid);
+      fd.append('etapa', etapa);
+
+      const res = await fetch('/api/evidences/upload', {
+        method: 'POST',
+        body: fd
+      });
+      const json = await res.json();
+      if (json.success && json.data) {
+        publicUrl = json.data.url_archivo || json.data.url;
+        rowId = json.data.id;
+      }
+    } catch (apiErr) {
+      console.warn('[imageCompressor] Fallback API upload omitido:', apiErr.message);
+    }
+  }
+
+  // Si no hay Storage o no hay UUID en BD aún, usamos dataUrl seguro para que la foto se vea y se guarde
+  const finalUrl = publicUrl || dataUrl;
 
   return {
-    id: `img-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-    url: dataUrl,
-    name: name || defaultName,
-    sizeKb,
-    etapa
+    id: rowId || `img-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    url: finalUrl,
+    url_archivo: finalUrl,
+    name: name || nombreArchivo,
+    nombre_archivo: name || nombreArchivo,
+    sizeKb: sizeKb || 50,
+    etapa: etapa
   };
 };
+
+/**
+ * Helper estandarizado para generar un objeto de evidencia seguro para el estado de la orden.
+ * Retorna un objeto 100% serializable en JSON con compresión garantizada.
+ */
+export const compressToSafeEvidence = async (fileOrSource, options = {}) => {
+  const { etapa = 'RECEPCION', name = '', equipoId = null, ordenId = null } = options;
+
+  try {
+    return await uploadEvidencePhoto({
+      fileOrSource,
+      equipoId,
+      ordenId,
+      etapa,
+      name
+    });
+  } catch (err) {
+    console.warn('[imageCompressor] Fallback a compresión local simple:', err.message);
+    const dataUrl = await compressImage(fileOrSource, {
+      maxWidth: 1280,
+      maxHeight: 1280,
+      quality: 0.7,
+      maxSizeBytes: 200 * 1024,
+      returnType: 'base64'
+    });
+
+    const sizeBytes = getDataUrlSizeBytes(dataUrl);
+    const defaultName = typeof fileOrSource?.name === 'string' 
+      ? fileOrSource.name 
+      : `foto-${Date.now()}.webp`;
+
+    return {
+      id: `img-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      url: dataUrl,
+      url_archivo: dataUrl,
+      name: name || defaultName,
+      nombre_archivo: name || defaultName,
+      sizeKb: Math.round(sizeBytes / 1024),
+      etapa
+    };
+  }
+};
+

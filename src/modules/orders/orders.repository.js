@@ -889,6 +889,28 @@ export const OrdersRepository = {
 
         const { rows: repRows } = await query(`SELECT * FROM equipo_repuestos_cotizados WHERE equipo_id = $1 ORDER BY orden_visual ASC, id ASC`, [eq.id]);
         eq.repuestos = repRows;
+
+        try {
+          const { rows: evRows } = await query(`SELECT * FROM equipo_evidencias WHERE equipo_id = $1 ORDER BY fecha_subida ASC, id ASC`, [eq.id]);
+          const recImgs = (evRows || [])
+            .filter(ev => String(ev.etapa || 'RECEPCION').toUpperCase() === 'RECEPCION')
+            .map(ev => ({ id: ev.id, url: ev.url_archivo, url_archivo: ev.url_archivo, name: ev.nombre_archivo, nombre_archivo: ev.nombre_archivo, etapa: 'RECEPCION' }));
+          const diagImgs = (evRows || [])
+            .filter(ev => String(ev.etapa || '').toUpperCase() === 'DIAGNOSTICO')
+            .map(ev => ({ id: ev.id, url: ev.url_archivo, url_archivo: ev.url_archivo, name: ev.nombre_archivo, nombre_archivo: ev.nombre_archivo, etapa: 'DIAGNOSTICO' }));
+          
+          eq.imagenes = recImgs;
+          eq.imagenesRecepcion = recImgs;
+          eq.imagenesInternas = diagImgs;
+          eq.imagenesDiagnostico = diagImgs;
+          eq.evidencias = evRows || [];
+        } catch (evErr) {
+          eq.imagenes = eq.imagenes || [];
+          eq.imagenesRecepcion = eq.imagenesRecepcion || [];
+          eq.imagenesInternas = eq.imagenesInternas || [];
+          eq.imagenesDiagnostico = eq.imagenesDiagnostico || [];
+          eq.evidencias = [];
+        }
       }
 
       orden.equipos = equiposRows;

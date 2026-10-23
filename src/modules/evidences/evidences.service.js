@@ -28,8 +28,12 @@ export const EvidencesService = {
     const uploadResult = await uploadFile(fileBuffer, fileName, mimeType);
 
     // 2. Persistir en la tabla equipo_evidencias
+    const sanitizedEquipoId = equipoId ? String(equipoId).trim() : null;
+    const sanitizedOrdenId = ordenId ? String(ordenId).trim() : null;
+
     const evidence = await EvidencesRepository.saveEvidence({
-      equipo_id: parseInt(equipoId, 10),
+      equipo_id: sanitizedEquipoId,
+      orden_id: sanitizedOrdenId,
       storage_driver: uploadResult.driver,
       nombre_archivo: uploadResult.fileName,
       url_archivo: uploadResult.url,
@@ -41,8 +45,8 @@ export const EvidencesService = {
 
     // 3. Registrar en auditoria_logs
     await logAudit({
-      ordenId: ordenId ? parseInt(ordenId, 10) : null,
-      equipoId: parseInt(equipoId, 10),
+      ordenId: sanitizedOrdenId,
+      equipoId: sanitizedEquipoId,
       usuarioId: user?.id || null,
       usuarioNombre: user?.nombre_completo || 'Técnico / Celular QR',
       usuarioRol: user?.rol || 'TECNICO',
@@ -58,7 +62,7 @@ export const EvidencesService = {
 
   async getEvidencesByEquipo(equipoId) {
     if (!equipoId) return [];
-    return await EvidencesRepository.getEvidencesByEquipoId(parseInt(equipoId, 10));
+    return await EvidencesRepository.getEvidencesByEquipoId(String(equipoId).trim());
   },
 
   async removeEvidence(id, user = null) {

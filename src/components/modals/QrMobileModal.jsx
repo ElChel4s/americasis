@@ -132,32 +132,37 @@ export default function QrMobileModal({
   }, [isOpen, equipoId]);
 
   // Subida directa desde PC
+  // Subida directa desde PC
   const handlePcUpload = async (e) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
     setUploadingPc(true);
+    const safetyTimer = setTimeout(() => setUploadingPc(false), 20000);
+
     try {
+      const { uploadEvidencePhoto } = await import('@/lib/utils/imageCompressor');
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('equipo_id', equipoId);
-        formData.append('orden_id', ordenId);
-        formData.append('etapa', selectedEtapa);
-
-        const res = await fetch('/api/evidences/upload', {
-          method: 'POST',
-          body: formData
-        });
-        const json = await res.json();
-        if (json.success && json.data) {
-          setEvidencias((prev) => [json.data, ...prev]);
+        try {
+          const uploaded = await uploadEvidencePhoto({
+            fileOrSource: file,
+            equipoId,
+            ordenId,
+            etapa: selectedEtapa,
+            name: file.name
+          });
+          if (uploaded) {
+            setEvidencias((prev) => [uploaded, ...prev]);
+          }
+        } catch (itemErr) {
+          console.warn('Error subiendo foto en QR modal:', itemErr);
         }
       }
     } catch (err) {
       console.error('Error subiendo desde PC:', err);
     } finally {
+      clearTimeout(safetyTimer);
       setUploadingPc(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }

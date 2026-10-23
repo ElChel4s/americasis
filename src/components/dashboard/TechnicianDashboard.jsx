@@ -44,15 +44,14 @@ export default function TechnicianDashboard() {
     }
   };
 
-  const handleRequestAssignment = async (ord) => {
+  const handleTomarYDiagnosticar = async (ord) => {
     try {
       setRequestingId(ord.id);
-      await OrdersService.solicitarAsignacion(ord.id, currentUser);
-      await fetchOrders();
-      showToast('Solicitud enviada a Recepción/Administración');
+      await OrdersService.tomarYDiagnosticar(ord.id, currentUser);
+      router.push(`/tecnico/diagnostico/${ord.id}`);
     } catch (err) {
-      console.error('Error al solicitar asignación:', err);
-      showToast('Error al enviar la solicitud.');
+      console.error('Error al tomar y diagnosticar orden:', err);
+      router.push(`/tecnico/diagnostico/${ord.id}`);
     } finally {
       setRequestingId(null);
     }
@@ -88,11 +87,18 @@ export default function TechnicianDashboard() {
   // Verificar si la orden está asignada al usuario actual
   const isOrderAssignedToMe = (order) => {
     if (!currentUser) return false;
-    // Si la solicitud de asignación fue aprobada para este técnico
-    if (order.solicitud_asignacion && order.solicitud_asignacion.estado === 'APROBADA' &&
+    // Si la solicitud de asignación fue registrada o aprobada para este técnico
+    if (order.solicitud_asignacion &&
         (String(order.solicitud_asignacion.tecnico_id) === String(currentUser.id) ||
          (order.solicitud_asignacion.tecnico_nombre && currentUser.nombre_completo &&
           currentUser.nombre_completo.toLowerCase() === order.solicitud_asignacion.tecnico_nombre.toLowerCase()))) {
+      return true;
+    }
+    // Caso solicitud_edicion también (usado en OS-00017)
+    if (order.condiciones_comerciales_json?.solicitud_edicion &&
+        (String(order.condiciones_comerciales_json.solicitud_edicion.tecnico_id) === String(currentUser.id) ||
+         (order.condiciones_comerciales_json.solicitud_edicion.tecnico_nombre && currentUser.nombre_completo &&
+          currentUser.nombre_completo.toLowerCase() === order.condiciones_comerciales_json.solicitud_edicion.tecnico_nombre.toLowerCase()))) {
       return true;
     }
     if (order.tecnico_asignado_id && String(order.tecnico_asignado_id) === String(currentUser.id)) return true;
@@ -395,16 +401,6 @@ export default function TechnicianDashboard() {
                           <CheckCircle2 size={11} className="text-emerald-600" />
                           <span>Asignada a ti</span>
                         </span>
-                      ) : isMyPending ? (
-                        <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 animate-pulse">
-                          <Clock size={11} className="text-amber-700" />
-                          <span>Esperando Aprobación</span>
-                        </span>
-                      ) : isOtherPending ? (
-                        <span className="text-[10px] font-bold px-2.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1">
-                          <Clock size={11} className="text-amber-600" />
-                          <span>Solicitada por: {sol.tecnico_nombre}</span>
-                        </span>
                       ) : ord.tecnico_nombre_manual ? (
                         <span className="text-[10px] font-bold px-2.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
                           Técnico: <strong className="text-gray-900">{ord.tecnico_nombre_manual}</strong>
@@ -441,7 +437,7 @@ export default function TechnicianDashboard() {
 
                   {/* Botones Dinámicos de Acción */}
                   <div className="shrink-0 flex items-center justify-end gap-2 flex-wrap">
-                    {/* Caso 1: Asignada a este técnico (o Admin) -> Botón verde destacado [ Diagnosticar Equipos ] */}
+                    {/* Caso 1: Asignada a este técnico (o Admin) -> Botón verde directo [ Continuar Diagnóstico ] */}
                     {(assignedToMe || isAdmin) ? (
                       <button
                         type="button"
@@ -450,59 +446,29 @@ export default function TechnicianDashboard() {
                         className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-black text-xs sm:text-sm rounded-xl shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
                       >
                         <Wrench size={16} />
-                        <span>Diagnosticar Equipos</span>
+                        <span>Continuar Diagnóstico</span>
                         <ArrowRight size={15} />
                       </button>
-                    ) : isMyPending ? (
-                      /* Caso 2: Solicitud enviada por el usuario actual -> Botón deshabilitado amarillo/ámbar con reloj/spinner */
-                      <button
-                        type="button"
-                        disabled
-                        id={`btn-esperando-aprobacion-${ord.id}`}
-                        className="w-full sm:w-auto px-4 py-2.5 bg-amber-100 border border-amber-300 text-amber-900 font-bold text-xs sm:text-sm rounded-xl shadow-xs flex items-center justify-center gap-2 cursor-not-allowed opacity-95"
-                      >
-                        <RefreshCw size={15} className="animate-spin text-amber-700" />
-                        <span>Solicitud Enviada - Esperando Aprobación</span>
-                      </button>
-                    ) : isOtherPending ? (
-                      /* Caso 3: Solicitud de otro técnico */
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          disabled
-                          className="w-full sm:w-auto px-4 py-2.5 bg-slate-100 border border-slate-300 text-slate-500 font-bold text-xs sm:text-sm rounded-xl shadow-xs flex items-center justify-center gap-2 cursor-not-allowed"
-                        >
-                          <Clock size={15} />
-                          <span>Solicitada por {sol?.tecnico_nombre || 'otro técnico'}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => router.push(`/tecnico/diagnostico/${ord.id}`)}
-                          className="p-2.5 bg-white hover:bg-slate-100 border border-slate-200 text-gray-600 rounded-xl transition-all cursor-pointer"
-                          title="Ver nota en modo consulta"
-                        >
-                          <Eye size={16} />
-                        </button>
-                      </div>
                     ) : (
-                      /* Caso 4: solicitud_asignacion == null -> Botón azul [ Solicitar Asignación ] */
+                      /* Caso 2: Orden en RECIBIDO / PENDIENTE_DIAGNOSTICO -> Botón verde directo [ Tomar y Diagnosticar ] */
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          id={`btn-solicitar-asignacion-${ord.id}`}
+                          id={`btn-tomar-diagnosticar-${ord.id}`}
                           disabled={requestingId === ord.id}
-                          onClick={() => handleRequestAssignment(ord)}
-                          className="w-full sm:w-auto px-5 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white font-black text-xs sm:text-sm rounded-xl shadow-md shadow-blue-600/20 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-60"
+                          onClick={() => handleTomarYDiagnosticar(ord)}
+                          className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-black text-xs sm:text-sm rounded-xl shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-60"
                         >
                           {requestingId === ord.id ? (
                             <>
                               <RefreshCw size={15} className="animate-spin" />
-                              <span>Enviando...</span>
+                              <span>Asignando...</span>
                             </>
                           ) : (
                             <>
                               <Wrench size={15} />
-                              <span>Solicitar Asignación</span>
+                              <span>Tomar y Diagnosticar</span>
+                              <ArrowRight size={15} />
                             </>
                           )}
                         </button>

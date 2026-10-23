@@ -196,23 +196,46 @@ export default function Step2Diagnosis({
   const [cropModalOpen, setCropModalOpen] = useState(false);
   const [cropImageSrc, setCropImageSrc] = useState(null);
 
+  // Sincronizar inmediatamente evidencias de diagnóstico cuando cargan del backend
+  useEffect(() => {
+    const list = (Array.isArray(equipo.imagenesInternas) && equipo.imagenesInternas.length > 0)
+      ? equipo.imagenesInternas
+      : (Array.isArray(equipo.imagenesDiagnostico) && equipo.imagenesDiagnostico.length > 0
+          ? equipo.imagenesDiagnostico
+          : (Array.isArray(equipo.evidencias)
+              ? equipo.evidencias
+                  .filter(ev => String(ev.etapa || '').toUpperCase() === 'DIAGNOSTICO')
+                  .map(ev => ({ id: ev.id, url: ev.url_archivo, url_archivo: ev.url_archivo, name: ev.nombre_archivo, etapa: 'DIAGNOSTICO' }))
+              : []));
+
+    if (list && list.length > 0) {
+      setImagenesInternas(list);
+    }
+  }, [equipo?.id, equipo?.imagenesInternas, equipo?.imagenesDiagnostico, equipo?.evidencias]);
+
   const handleCropComplete = async (croppedBlob) => {
     setCropModalOpen(false);
+    setIsOptimizing(true);
+    const safetyTimer = setTimeout(() => {
+      setIsOptimizing(false);
+    }, 15000);
+
     try {
-      setIsOptimizing(true);
       const { compressToSafeEvidence } = await import('@/lib/utils/imageCompressor');
       const safeImg = await compressToSafeEvidence(croppedBlob, {
         etapa: 'DIAGNOSTICO',
-        name: `diag-${Date.now()}.webp`
+        name: `diag-${Date.now()}.webp`,
+        equipoId: equipo?.id,
+        ordenId: equipo?.orden_id
       });
-      setImagenesInternas((prev) => [
-        ...prev,
-        safeImg
-      ]);
+      if (safeImg) {
+        setImagenesInternas((prev) => [...prev, safeImg]);
+      }
     } catch (err) {
       console.error('Error procesando imagen recortada en diagnóstico:', err);
       alert('Error al procesar foto recortada: ' + (err.message || 'Error desconocido'));
     } finally {
+      clearTimeout(safetyTimer);
       setIsOptimizing(false);
     }
   };
@@ -930,16 +953,26 @@ export default function Step2Diagnosis({
                 }
 
                 setIsOptimizing(true);
+                const safetyTimer = setTimeout(() => {
+                  setIsOptimizing(false);
+                }, 15000);
+
                 try {
                   const { compressToSafeEvidence } = await import('@/lib/utils/imageCompressor');
                   const newPreviews = [...imagenesInternas];
                   
                   for (const file of Array.from(files)) {
-                    const safeImg = await compressToSafeEvidence(file, {
-                      etapa: 'DIAGNOSTICO',
-                      name: file.name
-                    });
-                    newPreviews.push(safeImg);
+                    try {
+                      const safeImg = await compressToSafeEvidence(file, {
+                        etapa: 'DIAGNOSTICO',
+                        name: file.name,
+                        equipoId: equipo?.id,
+                        ordenId: equipo?.orden_id
+                      });
+                      if (safeImg) newPreviews.push(safeImg);
+                    } catch (fErr) {
+                      console.warn('Error subiendo foto de diagnóstico:', fErr);
+                    }
                   }
                   
                   setImagenesInternas(newPreviews);
@@ -947,6 +980,7 @@ export default function Step2Diagnosis({
                   console.error('Error optimizando imágenes en Step 2:', err);
                   alert('Error al optimizar imágenes: ' + (err.message || 'Error desconocido'));
                 } finally {
+                  clearTimeout(safetyTimer);
                   setIsOptimizing(false);
                   e.target.value = '';
                 }

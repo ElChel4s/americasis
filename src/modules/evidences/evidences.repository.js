@@ -53,6 +53,26 @@ export const EvidencesRepository = {
 
     // 2. Fallback PostgreSQL Pool
     try {
+      if (orden_id) {
+        const { rows } = await query(`
+          INSERT INTO equipo_evidencias 
+          (equipo_id, orden_id, storage_driver, nombre_archivo, url_archivo, etapa, tamano_bytes, mime_type, subido_por_usuario_id, fecha_subida)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+          RETURNING *
+        `, [
+          equipo_id,
+          orden_id,
+          storage_driver,
+          nombre_archivo,
+          url_archivo,
+          etapa,
+          tamano_bytes,
+          mime_type,
+          subido_por_usuario_id
+        ]);
+        return rows[0];
+      }
+
       const { rows } = await query(`
         INSERT INTO equipo_evidencias 
         (equipo_id, storage_driver, nombre_archivo, url_archivo, etapa, tamano_bytes, mime_type, subido_por_usuario_id, fecha_subida)
@@ -74,8 +94,9 @@ export const EvidencesRepository = {
       console.warn('[EvidencesRepository] Supabase/PostgreSQL offline. Guardando evidencia en cache local.', err.message);
       
       const newEvidence = {
-        id: Date.now(),
-        equipo_id: typeof equipo_id === 'string' && equipo_id.length > 20 ? equipo_id : parseInt(equipo_id, 10),
+        id: `ev-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        equipo_id: equipo_id,
+        orden_id: orden_id,
         storage_driver,
         nombre_archivo,
         url_archivo,

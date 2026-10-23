@@ -77,6 +77,8 @@ export default function TecnicoDiagnosticoMesaPage() {
   // - Los demás técnicos no asignados tienen acceso en modo solo consulta (pueden solicitar autorización).
   const isAdmin = currentUser?.rol === 'ADMINISTRADOR';
   const isRecepcion = currentUser?.rol === 'RECEPCION';
+  const isTechnician = currentUser?.rol === 'TECNICO';
+
   const isAssigned = Boolean(
     order?.usuario_tecnico_id && (
       String(order.usuario_tecnico_id) === String(currentUser?.id) ||
@@ -84,9 +86,25 @@ export default function TecnicoDiagnosticoMesaPage() {
     )
   ) || Boolean(
     order?.tecnico_nombre_manual && currentUser?.nombre_completo &&
-    order.tecnico_nombre_manual.toLowerCase().includes(currentUser.nombre_completo.toLowerCase())
+    (order.tecnico_nombre_manual.toLowerCase().includes(currentUser.nombre_completo.toLowerCase()) ||
+     currentUser.nombre_completo.toLowerCase().includes(order.tecnico_nombre_manual.toLowerCase()))
   ) || Boolean(
     order?.tecnico_asignado_id && String(order.tecnico_asignado_id) === String(currentUser?.id)
+  ) || Boolean(
+    order?.solicitud_asignacion && (
+      String(order.solicitud_asignacion.tecnico_id) === String(currentUser?.id) ||
+      (order.solicitud_asignacion.tecnico_nombre && currentUser?.nombre_completo &&
+       order.solicitud_asignacion.tecnico_nombre.toLowerCase().includes(currentUser.nombre_completo.toLowerCase()))
+    )
+  ) || Boolean(
+    order?.condiciones_comerciales_json?.solicitud_edicion && (
+      String(order.condiciones_comerciales_json.solicitud_edicion.tecnico_id) === String(currentUser?.id) ||
+      (order.condiciones_comerciales_json.solicitud_edicion.tecnico_nombre && currentUser?.nombre_completo &&
+       order.condiciones_comerciales_json.solicitud_edicion.tecnico_nombre.toLowerCase().includes(currentUser.nombre_completo.toLowerCase()))
+    )
+  ) || (
+    // En taller de radios, si no hay técnico asignado o está en recibido/pendiente, cualquier técnico puede diagnosticarlo
+    isTechnician && (!order?.usuario_tecnico_id || !order?.tecnico_nombre_manual || order?.estado === 'RECIBIDO' || order?.estado === 'PENDIENTE_DIAGNOSTICO')
   );
 
   const canEdit = isAdmin || isRecepcion || isAssigned;
@@ -103,23 +121,17 @@ export default function TecnicoDiagnosticoMesaPage() {
     return 'Volver a Cola de Mesa';
   };
 
-  const isPendingRequest = order?.solicitud_edicion_estado === 'PENDIENTE';
-  const myPendingRequest = isPendingRequest && (
-    order?.solicitud_edicion_tecnico_id === currentUser?.id ||
-    order?.solicitud_edicion_tecnico_nombre === currentUser?.nombre_completo
-  );
-
-  const handleSolicitarPermiso = async () => {
+  const handleTomarOrdenDirecto = async () => {
     if (!currentUser) return;
     setIsRequestingPermission(true);
     try {
-      const updated = await OrdersService.requestTechnicianPermission(order.id, currentUser);
+      const updated = await OrdersService.tomarYDiagnosticar(order.id, currentUser);
       if (updated) {
         setOrder(updated);
-        showFeedbackMsg('Solicitud enviada a Recepción y Administración.');
+        showFeedbackMsg('✓ Orden asignada directamente a tu mesa técnica.');
       }
     } catch (err) {
-      showFeedbackMsg('No se pudo enviar la solicitud.', 'error');
+      showFeedbackMsg('No se pudo asignar la orden.', 'error');
     } finally {
       setIsRequestingPermission(false);
     }
@@ -494,31 +506,24 @@ export default function TecnicoDiagnosticoMesaPage() {
             </>
           ) : (
             <div className="w-full sm:w-auto flex items-center gap-2">
-              {myPendingRequest ? (
-                <div className="flex items-center gap-2 bg-amber-100 text-amber-900 px-4 py-3 rounded-xl border border-amber-300 text-xs font-bold">
-                  <Clock size={16} className="text-amber-700 animate-spin" />
-                  <span>Esperando aprobación de Recepción</span>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleSolicitarPermiso}
-                  disabled={isRequestingPermission}
-                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3.5 bg-navy hover:bg-slate-800 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50"
-                >
-                  {isRequestingPermission ? (
-                    <>
-                      <Loader2 size={16} className="animate-spin" />
-                      <span>Enviando solicitud...</span>
-                    </>
-                  ) : (
-                    <>
-                      <ShieldAlert size={16} />
-                      <span>Solicitar Permiso para Diagnosticar</span>
-                    </>
-                  )}
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleTomarOrdenDirecto}
+                disabled={isRequestingPermission}
+                className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isRequestingPermission ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    <span>Asignando orden...</span>
+                  </>
+                ) : (
+                  <>
+                    <Wrench size={16} />
+                    <span>Tomar Orden y Asignarme</span>
+                  </>
+                )}
+              </button>
             </div>
           )}
         </div>
