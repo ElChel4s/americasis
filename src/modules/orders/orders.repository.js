@@ -713,6 +713,7 @@ export const OrdersRepository = {
     if (diagFotos.length > 0) {
       await syncEquipoEvidenciasSupabase(resolvedOrderId, resolvedEquipoId, diagFotos);
     }
+    await pruneEquipoEvidenciasSupabase(resolvedEquipoId, 'DIAGNOSTICO', diagFotos);
 
     // 4. Recalcular subtotales
     const { data: allEqs } = await supabase

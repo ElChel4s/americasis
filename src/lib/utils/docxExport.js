@@ -28,15 +28,39 @@ import { resolveImageUrl } from '../services/orders.service.js';
  * Helper para cargar bytes de imagen tanto en navegador como en entorno Node.js
  */
 async function getImageBytes(urlOrPath) {
-  if (typeof window !== 'undefined') {
-    const res = await fetch(urlOrPath);
-    const blob = await res.blob();
-    return new Uint8Array(await blob.arrayBuffer());
-  } else {
-    const fs = await import('fs');
-    const path = await import('path');
-    const fullPath = path.join(process.cwd(), 'public', urlOrPath.replace(/^\//, ''));
-    return fs.readFileSync(fullPath);
+  if (!urlOrPath) return null;
+  try {
+    if (typeof urlOrPath === 'string' && urlOrPath.startsWith('data:')) {
+      const commaIdx = urlOrPath.indexOf(',');
+      const base64 = commaIdx !== -1 ? urlOrPath.slice(commaIdx + 1) : urlOrPath;
+      if (typeof window !== 'undefined') {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes;
+      } else {
+        return Buffer.from(base64, 'base64');
+      }
+    }
+    if (typeof window !== 'undefined') {
+      const res = await fetch(urlOrPath);
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      return new Uint8Array(await blob.arrayBuffer());
+    } else {
+      const fs = await import('fs');
+      const path = await import('path');
+      const fullPath = path.join(process.cwd(), 'public', urlOrPath.replace(/^\//, ''));
+      if (fs.existsSync(fullPath)) {
+        return fs.readFileSync(fullPath);
+      }
+      return null;
+    }
+  } catch (err) {
+    console.warn('[docxExport] No se pudo obtener bytes de imagen:', err.message);
+    return null;
   }
 }
 
@@ -669,8 +693,8 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
     })
   );
 
-  // SECCIÓN 7: ANEXO FOTOGRÁFICO (SI HAY FOTOS)
-  const todasFotos = [];
+  // SECCIÓN 7: ANEXO FOTOGRÁFICO OFICIAL (ORGANIZADO POR RADIO)
+  const equiposConFotosDocx = [];
   const seenDocxUrls = new Set();
 
   (formData.equipos || []).forEach((eq, eqIdx) => {
@@ -684,6 +708,10 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
       ...(Array.isArray(eq.imagenes) ? eq.imagenes.filter(img => {
         const et = String(img?.etapa || img?.tipo || '').toUpperCase();
         return et !== 'DIAGNOSTICO' && et !== 'INTERNA' && et !== 'INTERNO';
+      }) : []),
+      ...(Array.isArray(eq.evidencias) ? eq.evidencias.filter(img => {
+        const et = String(img?.etapa || img?.tipo || '').toUpperCase();
+        return et !== 'DIAGNOSTICO' && et !== 'INTERNA' && et !== 'INTERNO';
       }) : [])
     ];
 
@@ -694,46 +722,55 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
       ...(Array.isArray(eq.imagenes) ? eq.imagenes.filter(img => {
         const et = String(img?.etapa || img?.tipo || '').toUpperCase();
         return et === 'DIAGNOSTICO' || et === 'INTERNA' || et === 'INTERNO';
+      }) : []),
+      ...(Array.isArray(eq.evidencias) ? eq.evidencias.filter(img => {
+        const et = String(img?.etapa || img?.tipo || '').toUpperCase();
+        return et === 'DIAGNOSTICO' || et === 'INTERNA' || et === 'INTERNO';
       }) : [])
     ];
 
+    const reception = [];
     rawRecepcion.forEach((img, i) => {
       const url = resolveImageUrl(img);
       if (!url || seenDocxUrls.has(url)) return;
       seenDocxUrls.add(url);
-      todasFotos.push({
+      reception.push({
         ...img,
         url,
-        equipoLabel: handyLabel,
-        serie,
-        tipo: 'Recepción (Exterior)',
-        name: img?.name || `Foto Ingreso #${i + 1}`
+        name: img?.name || img?.nombre_archivo || `Foto Ingreso #${i + 1}`
       });
     });
 
+    const diagnosis = [];
     rawDiagnostico.forEach((img, i) => {
       const url = resolveImageUrl(img);
       if (!url || seenDocxUrls.has(url)) return;
       seenDocxUrls.add(url);
-      todasFotos.push({
+      diagnosis.push({
         ...img,
         url,
-        equipoLabel: handyLabel,
-        serie,
-        tipo: 'Diagnóstico (Laboratorio RF)',
-        name: img?.name || `Foto Placa #${i + 1}`
+        name: img?.name || img?.nombre_archivo || `Foto Placa / Daño #${i + 1}`
       });
     });
+
+    if (reception.length > 0 || diagnosis.length > 0) {
+      equiposConFotosDocx.push({
+        handyLabel,
+        serie,
+        reception,
+        diagnosis
+      });
+    }
   });
 
-  if (todasFotos.length > 0) {
+  if (equiposConFotosDocx.length > 0) {
     paragraphs.push(
       new Paragraph({ children: [new PageBreak()] }),
       new Paragraph({
         alignment: AlignmentType.CENTER,
         children: [
           new TextRun({
-            text: 'ANEXO FOTOGRAFICO',
+            text: 'ANEXO FOTOGRAFICO OFICIAL',
             bold: true,
             underline: {},
             size: 26
@@ -744,28 +781,169 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
         alignment: AlignmentType.CENTER,
         children: [
           new TextRun({
-            text: 'Estado de los equipos.\nEvidencias técnicas registradas en Recepción y Laboratorio RF.',
+            text: 'Estado de los equipos.\nEvidencias técnicas de Recepción y Laboratorio organizadas por radio.',
             size: 20
           })
         ],
-        spacing: { after: 200 }
+        spacing: { after: 250 }
       })
     );
 
-    todasFotos.forEach((foto, fi) => {
+    for (let eqIdx = 0; eqIdx < equiposConFotosDocx.length; eqIdx++) {
+      const eqFoto = equiposConFotosDocx[eqIdx];
+
       paragraphs.push(
         new Paragraph({
           children: [
             new TextRun({
-              text: `[Foto ${fi + 1}] ${foto.equipoLabel} (S/N: ${foto.serie}) — Etapa de ${foto.tipo}: ${foto.name}`,
+              text: `RADIO #${eqIdx + 1}: ${eqFoto.handyLabel} (S/N: ${eqFoto.serie})`,
               bold: true,
-              size: 20
+              size: 22,
+              color: '1E293B'
             })
           ],
-          spacing: { before: 100, after: 50 }
+          spacing: { before: 200, after: 100 }
         })
       );
-    });
+
+      // Bloque 1: Registro de Ingreso (Recepción)
+      paragraphs.push(
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: `1. Registro de Ingreso (Recepción) — ${eqFoto.handyLabel} (S/N: ${eqFoto.serie})`,
+              bold: true,
+              size: 20,
+              color: 'E30613'
+            })
+          ],
+          spacing: { before: 80, after: 60 }
+        })
+      );
+
+      if (eqFoto.reception.length === 0) {
+        paragraphs.push(
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: '• Sin fotos de ingreso registradas en mostrador.',
+                italics: true,
+                size: 19,
+                color: '64748B'
+              })
+            ],
+            spacing: { after: 80 }
+          })
+        );
+      } else {
+        for (let fi = 0; fi < eqFoto.reception.length; fi++) {
+          const foto = eqFoto.reception[fi];
+          let imgBytes = null;
+          try {
+            imgBytes = await getImageBytes(foto.url);
+          } catch (e) {}
+
+          const photoChildren = [
+            new TextRun({
+              text: `  [Foto ${fi + 1}] ${foto.name} — S/N: ${eqFoto.serie}\n`,
+              bold: true,
+              size: 19,
+              color: '334155'
+            })
+          ];
+
+          if (imgBytes) {
+            try {
+              photoChildren.push(
+                new ImageRun({
+                  data: imgBytes,
+                  transformation: {
+                    width: 250,
+                    height: 180
+                  }
+                })
+              );
+            } catch (err) {}
+          }
+
+          paragraphs.push(
+            new Paragraph({
+              children: photoChildren,
+              spacing: { after: 120 }
+            })
+          );
+        }
+      }
+
+      // Bloque 2: Evidencia Técnica de Daños y Laboratorio
+      paragraphs.push(
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: `2. Evidencia Técnica de Daños y Laboratorio — ${eqFoto.handyLabel} (S/N: ${eqFoto.serie})`,
+              bold: true,
+              size: 20,
+              color: '0F172A'
+            })
+          ],
+          spacing: { before: 100, after: 60 }
+        })
+      );
+
+      if (eqFoto.diagnosis.length === 0) {
+        paragraphs.push(
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: '• Sin fotos de daños o placa registradas en laboratorio.',
+                italics: true,
+                size: 19,
+                color: '64748B'
+              })
+            ],
+            spacing: { after: 150 }
+          })
+        );
+      } else {
+        for (let fi = 0; fi < eqFoto.diagnosis.length; fi++) {
+          const foto = eqFoto.diagnosis[fi];
+          let imgBytes = null;
+          try {
+            imgBytes = await getImageBytes(foto.url);
+          } catch (e) {}
+
+          const photoChildren = [
+            new TextRun({
+              text: `  [Foto ${fi + 1}] ${foto.name} — S/N: ${eqFoto.serie}\n`,
+              bold: true,
+              size: 19,
+              color: '334155'
+            })
+          ];
+
+          if (imgBytes) {
+            try {
+              photoChildren.push(
+                new ImageRun({
+                  data: imgBytes,
+                  transformation: {
+                    width: 250,
+                    height: 180
+                  }
+                })
+              );
+            } catch (err) {}
+          }
+
+          paragraphs.push(
+            new Paragraph({
+              children: photoChildren,
+              spacing: { after: 120 }
+            })
+          );
+        }
+      }
+    }
   }
 
   // Configuración de encabezados y pies de página oficiales

@@ -16,7 +16,13 @@ import {
   X, 
   FileText, 
   ShieldCheck, 
-  Loader2 
+  Loader2,
+  Maximize2,
+  ExternalLink,
+  Eye,
+  Smartphone,
+  ZoomIn,
+  ZoomOut
 } from 'lucide-react';
 import QrMobileModal from '@/components/modals/QrMobileModal';
 import ImageCropModal from '@/components/modals/ImageCropModal';
@@ -185,6 +191,8 @@ export default function Step2Diagnosis({
 
   // 4. Modal de Código QR para Fotos con Celular y Galería
   const [showQrModal, setShowQrModal] = useState(false);
+  const [lightboxImage, setLightboxImage] = useState(null);
+  const [zoomLevel, setZoomLevel] = useState(1);
   const [imagenesInternas, setImagenesInternas] = useState(
     (Array.isArray(equipo.imagenesInternas) && equipo.imagenesInternas.length > 0)
       ? equipo.imagenesInternas
@@ -195,6 +203,101 @@ export default function Step2Diagnosis({
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [cropModalOpen, setCropModalOpen] = useState(false);
   const [cropImageSrc, setCropImageSrc] = useState(null);
+
+  // Escuchar tecla Esc para cerrar el Lightbox
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setLightboxImage(null);
+        setZoomLevel(1);
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+    }
+  }, []);
+
+  // 1. Fotos de Ingreso (Recepción) [Modo Lectura]
+  const fotosRecepcion = useMemo(() => {
+    const list = [];
+    const seenUrls = new Set();
+    const pushFoto = (f, idx) => {
+      if (!f) return;
+      const url = typeof f === 'string' ? f : (f.url || f.url_archivo || f.dataUrl || f.preview || '');
+      if (!url || seenUrls.has(url)) return;
+      seenUrls.add(url);
+      list.push({
+        id: f.id || `rec-${idx}`,
+        url,
+        url_archivo: url,
+        name: f.name || f.nombre_archivo || `Foto Ingreso #${list.length + 1}`,
+        etapa: 'RECEPCION'
+      });
+    };
+
+    if (Array.isArray(equipo.imagenesRecepcion) && equipo.imagenesRecepcion.length > 0) {
+      equipo.imagenesRecepcion.forEach(pushFoto);
+    } else if (Array.isArray(equipo.imagenes) && equipo.imagenes.length > 0) {
+      equipo.imagenes
+        .filter(f => {
+          const et = String(f?.etapa || '').toUpperCase();
+          return et !== 'DIAGNOSTICO' && et !== 'INTERNA' && et !== 'INTERNO';
+        })
+        .forEach(pushFoto);
+    }
+
+    if (Array.isArray(equipo.evidencias) && equipo.evidencias.length > 0) {
+      equipo.evidencias
+        .filter(f => {
+          const et = String(f?.etapa || '').toUpperCase();
+          return et === 'RECEPCION' || (!et && !seenUrls.has(f.url_archivo || f.url));
+        })
+        .forEach(pushFoto);
+    }
+
+    return list;
+  }, [equipo.imagenesRecepcion, equipo.imagenes, equipo.evidencias]);
+
+  // Procesador unificado de fotos de daños / laboratorio con compresión WebP
+  const procesarFotosDiagnostico = async (fileList) => {
+    if (!fileList || fileList.length === 0) return;
+    setIsOptimizing(true);
+    const safetyTimer = setTimeout(() => {
+      setIsOptimizing(false);
+    }, 15000);
+
+    try {
+      const { compressToSafeEvidence } = await import('@/lib/utils/imageCompressor');
+      const nuevasFotos = [];
+
+      for (const file of Array.from(fileList)) {
+        try {
+          const safeImg = await compressToSafeEvidence(file, {
+            etapa: 'DIAGNOSTICO',
+            name: file.name || `diag-${Date.now()}.webp`,
+            equipoId: equipo?.id,
+            ordenId: equipo?.orden_id
+          });
+          if (safeImg) {
+            nuevasFotos.push(safeImg);
+          }
+        } catch (fErr) {
+          console.warn('Error comprimiendo foto de diagnóstico:', fErr);
+        }
+      }
+
+      if (nuevasFotos.length > 0) {
+        setImagenesInternas((prev) => [...prev, ...nuevasFotos]);
+      }
+    } catch (err) {
+      console.error('Error optimizando evidencias de diagnóstico:', err);
+      alert('Error al optimizar evidencias: ' + (err.message || 'Error desconocido'));
+    } finally {
+      clearTimeout(safetyTimer);
+      setIsOptimizing(false);
+    }
+  };
 
   // Sincronizar inmediatamente evidencias de diagnóstico cuando cargan del backend
   useEffect(() => {
@@ -599,6 +702,81 @@ export default function Step2Diagnosis({
       </div>
 
       {/* ============================================================== */}
+      {/* 1.1 EVIDENCIAS DE RECEPCIÓN (ESTADO INICIAL) [MODO LECTURA] */}
+      {/* ============================================================== */}
+      <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-5 sm:p-6 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+              <Camera size={18} className="text-slate-600" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-base sm:text-lg font-black text-gray-900">
+                  Evidencias de Recepción (Estado Inicial)
+                </h3>
+                <span className="text-[10px] font-bold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md uppercase">
+                  Modo Lectura
+                </span>
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Fotografías de ingreso capturadas en mostrador (haz clic en cualquier foto para abrirla en zoom).
+              </p>
+            </div>
+          </div>
+          <span className="text-[11px] font-bold text-gray-600 bg-slate-50 px-2.5 py-1 rounded-full border border-slate-200 self-start sm:self-auto shrink-0">
+            {fotosRecepcion.length} foto(s) de ingreso
+          </span>
+        </div>
+
+        {fotosRecepcion.length === 0 ? (
+          <div className="p-4 bg-slate-50/70 border border-dashed border-slate-200 rounded-2xl text-center text-xs text-gray-500 italic">
+            Sin fotos de ingreso registradas en mostrador
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
+            {fotosRecepcion.map((foto, idx) => (
+              <div
+                key={foto.id || idx}
+                onClick={() => {
+                  setZoomLevel(1);
+                  setLightboxImage({
+                    url: foto.url,
+                    name: foto.name,
+                    etapa: 'RECEPCION',
+                    equipo: `${equipo.marca || 'Radio'} ${equipo.modelo || ''} (S/N: ${equipo.numero_serie || equipo.serie || 'S/N'})`,
+                    idx: idx + 1,
+                    total: fotosRecepcion.length
+                  });
+                }}
+                className="group relative aspect-square rounded-2xl overflow-hidden border-2 border-slate-200/90 bg-slate-100 hover:border-slate-400 hover:shadow-md transition-all cursor-pointer"
+                title="Clic para ampliar foto de recepción"
+              >
+                <img
+                  src={foto.url}
+                  alt={foto.name}
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                />
+                <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 bg-black/70 text-white text-[10px] font-bold rounded-md backdrop-blur-xs">
+                  #{idx + 1}
+                </span>
+                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 flex items-center justify-center transition-colors">
+                  <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 text-gray-900 rounded-full p-2 shadow-lg">
+                    <Maximize2 size={16} />
+                  </div>
+                </div>
+                <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-1.5 text-center">
+                  <span className="text-[10px] text-white font-medium truncate block">
+                    {foto.name}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ============================================================== */}
       {/* 2. ESTADO DE ACCESORIOS Y DIAGNÓSTICO */}
       {/* ============================================================== */}
       <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-5 sm:p-6 space-y-4">
@@ -903,37 +1081,76 @@ export default function Step2Diagnosis({
       </div>
 
       {/* ============================================================== */}
-      {/* 4. EVIDENCIAS FOTOGRÁFICAS DE DIAGNÓSTICO INTERNO / PLACA */}
+      {/* 4. FOTOGRAFÍAS DE DAÑOS Y ESTADO INTERNO (TÉCNICO) */}
       {/* ============================================================== */}
       <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-5 sm:p-6 space-y-4">
-        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-          <div className="flex items-center gap-2">
-            <Camera size={18} className="text-[#E30613]" />
-            <h3 className="text-base sm:text-lg font-black text-gray-900">
-              Fotos de Diagnóstico Interno / Placa
-            </h3>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-red-50 text-[#E30613] flex items-center justify-center shrink-0">
+              <Camera size={18} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-base sm:text-lg font-black text-gray-900">
+                  Fotografías de Daños y Estado Interno (Técnico)
+                </h3>
+                <span className="text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded-md uppercase">
+                  Modo Edición
+                </span>
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Registre evidencias de componentes dañados, sulfato, pistas quemadas o roturas internas.
+              </p>
+            </div>
           </div>
-          <span className="text-[11px] font-bold text-gray-500 bg-slate-100 px-2 py-0.5 rounded-full">
-            {imagenesInternas.length} foto(s)
+          <span className="text-[11px] font-bold text-gray-600 bg-slate-50 px-2.5 py-1 rounded-full border border-slate-200 self-start sm:self-auto shrink-0">
+            {imagenesInternas.length} foto(s) de laboratorio
           </span>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {/* Botones de Captura */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* Opción A: Tomar con Cámara directa */}
+          <label className={`w-full border-2 border-emerald-300 bg-emerald-50/50 hover:bg-emerald-100/60 rounded-2xl p-3.5 flex items-center gap-3 text-emerald-900 transition-all group cursor-pointer text-left shadow-xs ${isOptimizing ? 'opacity-60 cursor-not-allowed' : ''}`}>
+            <input 
+              type="file" 
+              accept="image/*" 
+              capture="environment"
+              className="hidden" 
+              disabled={isOptimizing}
+              onChange={async (e) => {
+                const files = e.target.files;
+                if (!files || files.length === 0) return;
+                await procesarFotosDiagnostico(files);
+                e.target.value = '';
+              }}
+            />
+            <div className="w-10 h-10 bg-emerald-600 text-white rounded-xl flex items-center justify-center shrink-0 shadow-sm group-hover:scale-105 transition-transform">
+              {isOptimizing ? <Loader2 className="animate-spin" size={18} /> : <Camera size={20} />}
+            </div>
+            <div>
+              <p className="font-black text-xs sm:text-sm text-emerald-950 leading-tight">Tomar con Cámara</p>
+              <p className="text-[10px] text-emerald-700 mt-0.5 font-bold">Dispositivo / Celular</p>
+            </div>
+          </label>
+
+          {/* Opción B: Tomar con Celular vía Código QR */}
           <button 
             type="button"
             onClick={() => setShowQrModal(true)}
-            className="w-full border-2 border-emerald-300 bg-emerald-50/40 hover:bg-emerald-50/80 rounded-2xl p-3.5 flex items-center gap-3 text-emerald-800 transition-all group cursor-pointer text-left shadow-xs"
+            className="w-full border border-emerald-200 hover:border-emerald-300 bg-white hover:bg-emerald-50/40 rounded-2xl p-3.5 flex items-center gap-3 text-emerald-900 transition-all group cursor-pointer text-left shadow-xs"
           >
-            <div className="w-10 h-10 bg-emerald-500 text-white rounded-xl flex items-center justify-center shrink-0 shadow-sm group-hover:scale-105 transition-transform">
-              <Camera size={20} />
+            <div className="w-10 h-10 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl flex items-center justify-center shrink-0 shadow-xs group-hover:scale-105 transition-transform">
+              <Smartphone size={20} />
             </div>
             <div>
-              <p className="font-black text-xs sm:text-sm text-emerald-950 leading-tight">Tomar con Celular</p>
-              <p className="text-[10px] text-emerald-700 mt-0.5 font-bold">Escanear Código QR</p>
+              <p className="font-bold text-xs sm:text-sm text-emerald-950 leading-tight">Vincular Celular</p>
+              <p className="text-[10px] text-emerald-700 mt-0.5 font-medium">Escanear Código QR</p>
             </div>
           </button>
 
-          <label className={`w-full border border-slate-200 hover:border-slate-300 bg-slate-50/60 hover:bg-slate-100/60 rounded-2xl p-3.5 flex items-center gap-3 text-gray-700 transition-all group cursor-pointer text-left ${isOptimizing ? 'opacity-60 cursor-not-allowed' : ''}`}>
+          {/* Opción C: Subir desde PC / Archivos */}
+          <label className={`w-full border border-slate-200 hover:border-slate-300 bg-slate-50/80 hover:bg-slate-100/80 rounded-2xl p-3.5 flex items-center gap-3 text-gray-700 transition-all group cursor-pointer text-left shadow-xs ${isOptimizing ? 'opacity-60 cursor-not-allowed' : ''}`}>
             <input 
               type="file" 
               accept="image/*" 
@@ -952,38 +1169,8 @@ export default function Step2Diagnosis({
                   return;
                 }
 
-                setIsOptimizing(true);
-                const safetyTimer = setTimeout(() => {
-                  setIsOptimizing(false);
-                }, 15000);
-
-                try {
-                  const { compressToSafeEvidence } = await import('@/lib/utils/imageCompressor');
-                  const newPreviews = [...imagenesInternas];
-                  
-                  for (const file of Array.from(files)) {
-                    try {
-                      const safeImg = await compressToSafeEvidence(file, {
-                        etapa: 'DIAGNOSTICO',
-                        name: file.name,
-                        equipoId: equipo?.id,
-                        ordenId: equipo?.orden_id
-                      });
-                      if (safeImg) newPreviews.push(safeImg);
-                    } catch (fErr) {
-                      console.warn('Error subiendo foto de diagnóstico:', fErr);
-                    }
-                  }
-                  
-                  setImagenesInternas(newPreviews);
-                } catch (err) {
-                  console.error('Error optimizando imágenes en Step 2:', err);
-                  alert('Error al optimizar imágenes: ' + (err.message || 'Error desconocido'));
-                } finally {
-                  clearTimeout(safetyTimer);
-                  setIsOptimizing(false);
-                  e.target.value = '';
-                }
+                await procesarFotosDiagnostico(files);
+                e.target.value = '';
               }}
             />
             <div className="w-10 h-10 bg-white border border-slate-200 text-navy rounded-xl flex items-center justify-center shrink-0 shadow-xs group-hover:scale-105 transition-transform">
@@ -991,32 +1178,62 @@ export default function Step2Diagnosis({
             </div>
             <div>
               <p className="font-bold text-xs sm:text-sm text-gray-900 leading-tight">
-                {isOptimizing ? 'Optimizando...' : 'Subir desde PC'}
+                {isOptimizing ? 'Comprimiendo...' : 'Subir desde PC'}
               </p>
               <p className="text-[10px] text-gray-500 mt-0.5">
-                {isOptimizing ? 'Procesando imágenes' : 'Explorar archivos locales'}
+                {isOptimizing ? 'Canvas WebP < 200 KB' : 'Explorar archivos locales'}
               </p>
             </div>
           </label>
         </div>
 
-        {/* Galería interna */}
+        {/* Galería Interna de Evidencias */}
         {imagenesInternas.length === 0 ? (
-          <p className="text-[11px] text-gray-400 italic text-center py-2">
-            No hay fotos internas. Suba fotos del estado de la placa, sulfato o componentes dañados.
-          </p>
+          <div className="p-4 bg-slate-50/70 border border-dashed border-slate-200 rounded-2xl text-center text-xs text-gray-400 italic">
+            No hay fotos internas registradas aún. Suba o tome fotos del estado de la placa, pistas dañadas, sulfato o componentes quemados.
+          </div>
         ) : (
-          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5 pt-1">
+          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3 pt-1">
             {imagenesInternas.map((img, idx) => (
-              <div key={idx} className="relative group aspect-square rounded-2xl overflow-hidden border-2 border-slate-200/90 shadow-sm bg-slate-100 hover:border-[#E30613]/50 transition-all">
-                <img src={img.url} alt={`Evidencia Interna ${idx + 1}`} className="w-full h-full object-cover" />
-                <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 bg-black/65 text-white text-[10px] font-black rounded-md backdrop-blur-xs">
+              <div 
+                key={img.id || idx}
+                onClick={() => {
+                  setZoomLevel(1);
+                  setLightboxImage({
+                    url: img.url,
+                    name: img.name || `Evidencia Daño #${idx + 1}`,
+                    etapa: 'DIAGNOSTICO',
+                    equipo: `${equipo.marca || 'Radio'} ${equipo.modelo || ''} (S/N: ${equipo.numero_serie || equipo.serie || 'S/N'})`,
+                    idx: idx + 1,
+                    total: imagenesInternas.length
+                  });
+                }}
+                className="group relative aspect-square rounded-2xl overflow-hidden border-2 border-slate-200/90 shadow-sm bg-slate-100 hover:border-red-400 hover:shadow-md transition-all cursor-pointer"
+                title="Clic para ampliar evidencia"
+              >
+                <img src={img.url} alt={`Evidencia Interna ${idx + 1}`} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200" />
+                <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 bg-black/70 text-white text-[10px] font-black rounded-md backdrop-blur-xs">
                   #{idx + 1}
                 </span>
+
+                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 flex items-center justify-center transition-colors pointer-events-none">
+                  <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 text-gray-900 rounded-full p-2 shadow-lg">
+                    <Maximize2 size={16} />
+                  </div>
+                </div>
+
+                <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-1.5 text-center pointer-events-none">
+                  <span className="text-[10px] text-white font-medium truncate block">
+                    {img.name || `Foto Placa #${idx + 1}`}
+                  </span>
+                </div>
+
+                {/* Botón de eliminación (basurero rojo) */}
                 <button
                   type="button"
-                  onClick={async () => {
-                    if (typeof window !== 'undefined' && !window.confirm('¿Desea eliminar esta fotografía de diagnóstico interno?')) {
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    if (typeof window !== 'undefined' && !window.confirm('¿Desea eliminar esta fotografía de evidencia de diagnóstico?')) {
                       return;
                     }
                     const foto = imagenesInternas[idx];
@@ -1209,6 +1426,15 @@ export default function Step2Diagnosis({
         ordenId={equipo.orden_id || '1'}
         equipoId={equipo.id}
         equipoNombre={`${equipo.marca || 'Radio'} ${equipo.modelo || ''} (S/N: ${equipo.numero_serie || 'Pendiente'})`}
+        onImagesUpdated={(newImgs) => {
+          if (Array.isArray(newImgs) && newImgs.length > 0) {
+            setImagenesInternas(prev => {
+              const existingUrls = new Set(prev.map(p => p.url || p.url_archivo));
+              const toAdd = newImgs.filter(img => !existingUrls.has(img.url || img.url_archivo));
+              return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+            });
+          }
+        }}
       />
 
       {/* Herramienta de Recorte y Rotación estilo WhatsApp */}
@@ -1218,6 +1444,102 @@ export default function Step2Diagnosis({
         onCropComplete={handleCropComplete}
         onClose={() => setCropModalOpen(false)}
       />
+
+      {/* ============================================================== */}
+      {/* MODAL DE AMPLIACIÓN / LIGHTBOX / ZOOM DE EVIDENCIAS */}
+      {/* ============================================================== */}
+      {lightboxImage && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col items-center justify-between p-3 sm:p-6 animate-in fade-in duration-200"
+          onClick={() => {
+            setLightboxImage(null);
+            setZoomLevel(1);
+          }}
+        >
+          {/* Header Superior del Lightbox */}
+          <div 
+            className="w-full max-w-5xl flex items-center justify-between text-white pb-3 border-b border-white/10 shrink-0"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-md tracking-wider ${
+                lightboxImage.etapa === 'RECEPCION'
+                  ? 'bg-emerald-400 text-black'
+                  : 'bg-red-600 text-white'
+              }`}>
+                {lightboxImage.etapa === 'RECEPCION' ? 'Recepción (Estado Inicial)' : 'Evidencia de Daño / Laboratorio'}
+              </span>
+              <div className="text-xs font-semibold text-gray-200 hidden sm:block truncate max-w-md">
+                {lightboxImage.equipo}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setZoomLevel(prev => prev === 1 ? 1.5 : (prev === 1.5 ? 2 : 1))}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                title="Cambiar nivel de zoom"
+              >
+                {zoomLevel > 1 ? <ZoomOut size={15} /> : <ZoomIn size={15} />}
+                <span>{zoomLevel}x</span>
+              </button>
+
+              <a
+                href={lightboxImage.url}
+                target="_blank"
+                rel="noreferrer"
+                download={lightboxImage.name}
+                className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors cursor-pointer"
+                title="Abrir imagen original"
+              >
+                <ExternalLink size={16} />
+              </a>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setLightboxImage(null);
+                  setZoomLevel(1);
+                }}
+                className="p-2 bg-white/10 hover:bg-red-600 text-white rounded-xl transition-colors cursor-pointer"
+                title="Cerrar visor (Esc)"
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+
+          {/* Área Central de la Imagen con Zoom */}
+          <div 
+            className="flex-1 flex items-center justify-center p-2 sm:p-4 overflow-auto max-w-5xl w-full my-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={lightboxImage.url}
+              alt={lightboxImage.name}
+              style={{ transform: `scale(${zoomLevel})` }}
+              className={`max-h-[75vh] max-w-full object-contain rounded-2xl shadow-2xl transition-transform duration-200 cursor-zoom-in ${
+                zoomLevel > 1 ? 'cursor-zoom-out' : ''
+              }`}
+              onClick={() => setZoomLevel(prev => prev === 1 ? 1.5 : 1)}
+            />
+          </div>
+
+          {/* Footer del Lightbox con detalles */}
+          <div 
+            className="w-full max-w-5xl flex flex-col sm:flex-row items-center justify-between text-gray-400 text-xs pt-3 border-t border-white/10 gap-2 shrink-0"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="font-mono text-gray-300 truncate max-w-lg">
+              {lightboxImage.name}
+            </div>
+            <div className="text-[11px] text-gray-400">
+              {zoomLevel > 1 ? 'Clic para reducir escala' : 'Clic sobre la foto para zoom 1.5x'} • Presiona [Esc] para cerrar
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -911,17 +911,17 @@ export const OrdersService = {
           (eq.tempId && String(e.tempId) === String(eq.tempId))
         ) || existingEquipos[i] || {};
 
-        const imgs = (Array.isArray(eq.imagenes) && eq.imagenes.length > 0)
-          ? eq.imagenes
-          : (Array.isArray(eq.imagenesRecepcion) && eq.imagenesRecepcion.length > 0
-              ? eq.imagenesRecepcion
-              : (Array.isArray(prev.imagenes) && prev.imagenes.length > 0 ? prev.imagenes : (prev.imagenesRecepcion || [])));
+        const imgs = Array.isArray(eq.imagenesRecepcion)
+          ? eq.imagenesRecepcion
+          : (Array.isArray(eq.imagenes)
+              ? eq.imagenes
+              : (prev.imagenesRecepcion || prev.imagenes || []));
 
-        const imgsInt = (Array.isArray(eq.imagenesInternas) && eq.imagenesInternas.length > 0)
+        const imgsInt = Array.isArray(eq.imagenesInternas)
           ? eq.imagenesInternas
-          : (Array.isArray(eq.imagenesDiagnostico) && eq.imagenesDiagnostico.length > 0
+          : (Array.isArray(eq.imagenesDiagnostico)
               ? eq.imagenesDiagnostico
-              : (Array.isArray(prev.imagenesInternas) && prev.imagenesInternas.length > 0 ? prev.imagenesInternas : (prev.imagenesDiagnostico || [])));
+              : (prev.imagenesInternas || prev.imagenesDiagnostico || []));
 
         return {
           ...prev,

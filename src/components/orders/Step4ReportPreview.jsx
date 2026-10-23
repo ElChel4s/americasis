@@ -234,11 +234,10 @@ export default function Step4ReportPreview({
     return arr.join(', ');
   };
 
-  // Fotos multi-equipo divididas en Recepción y Diagnóstico para Sección 7 (Anexo Fotográfico)
-  const allEquipmentPhotos = useMemo(() => {
-    const reception = [];
-    const diagnosis = [];
+  // Fotos multi-equipo organizadas por cada radio y clasificadas en Recepción vs Diagnóstico para Sección 7 (Anexo Fotográfico)
+  const equiposConFotos = useMemo(() => {
     const seenUrls = new Set();
+    const result = [];
 
     (formData.equipos || []).forEach((eq, eqIdx) => {
       const handyNum = eq.orden_indice || (eqIdx + 1);
@@ -282,7 +281,7 @@ export default function Step4ReportPreview({
         }) : [])
       ];
 
-      // Insertar en recepción evitando duplicados de URL
+      const reception = [];
       rawRecepcion.forEach((img, i) => {
         const url = resolveImageUrl(img);
         if (!url || seenUrls.has(url)) return;
@@ -293,11 +292,11 @@ export default function Step4ReportPreview({
           equipoLabel: handyLabel,
           serie,
           etapa: 'Recepción',
-          etiqueta: img?.name || `Foto Exterior #${i + 1}`
+          etiqueta: img?.name || img?.nombre_archivo || `Foto Exterior #${i + 1}`
         });
       });
 
-      // Insertar en diagnóstico evitando duplicados
+      const diagnosis = [];
       rawDiagnostico.forEach((img, i) => {
         const url = resolveImageUrl(img);
         if (!url || seenUrls.has(url)) return;
@@ -308,17 +307,26 @@ export default function Step4ReportPreview({
           equipoLabel: handyLabel,
           serie,
           etapa: 'Diagnóstico',
-          etiqueta: img?.name || `Foto Placa / Laboratorio #${i + 1}`
+          etiqueta: img?.name || img?.nombre_archivo || `Foto Placa / Daño #${i + 1}`
         });
       });
+
+      if (reception.length > 0 || diagnosis.length > 0) {
+        result.push({
+          equipoIndex: eqIdx,
+          handyLabel,
+          serie,
+          reception,
+          diagnosis,
+          totalFotos: reception.length + diagnosis.length
+        });
+      }
     });
 
-    return { reception, diagnosis };
+    return result;
   }, [formData.equipos]);
 
-  const fotosRecepcion = allEquipmentPhotos.reception;
-  const fotosDiagnostico = allEquipmentPhotos.diagnosis;
-  const tieneFotos = fotosRecepcion.length > 0 || fotosDiagnostico.length > 0;
+  const tieneFotos = equiposConFotos.length > 0;
 
   const ordenNumeroStr = formData.ordenServicio || formData.numero_orden || (formData.id ? `OS-${String(formData.id).padStart(5, '0')}` : 'PROV');
   const clienteNombreStr = formData.cliente || formData.razon_social || 'CLIENTE NO ESPECIFICADO';
@@ -874,70 +882,104 @@ export default function Step4ReportPreview({
             <div className="px-2 sm:px-6 space-y-6 text-gray-900">
               <div className="text-center space-y-1">
                 <h2 className="text-base sm:text-lg font-black underline underline-offset-4 uppercase tracking-wider text-gray-900">
-                  ANEXO FOTOGRAFICO
+                  ANEXO FOTOGRAFICO OFICIAL
                 </h2>
                 <p className="text-xs text-gray-600 font-medium">
-                  Estado de los equipos. Registro visual de ingreso y componentes intervenidos en laboratorio.
+                  Registro visual de ingreso e inspección técnica de laboratorio por radio intervenida.
                 </p>
               </div>
 
-              {/* Cuadrícula formal de 2 columnas distinguiendo Recepción vs Diagnóstico */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Columna A: Fotos de Recepción */}
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2 pb-1 border-b border-gray-300">
-                    <Camera size={14} className="text-[#E30613]" />
-                    <h3 className="font-black text-xs uppercase text-gray-900">
-                      Fotos de Recepción (Estado Exterior al Ingresar)
-                    </h3>
-                  </div>
-
-                  {fotosRecepcion.length === 0 ? (
-                    <p className="text-[11px] text-gray-400 italic">No se registraron fotos exteriores en recepción.</p>
-                  ) : (
-                    fotosRecepcion.map((foto, idx) => (
-                      <div key={idx} className="border border-gray-300 p-2 bg-slate-50 rounded-xl space-y-1 break-inside-avoid shadow-xs">
-                        <img
-                          src={foto.url}
-                          alt={foto.etiqueta}
-                          className="w-full h-44 object-contain rounded bg-white"
-                        />
-                        <div className="text-[10.5px] text-gray-800 text-center font-semibold pt-1">
-                          <span className="font-bold text-gray-900">{foto.equipoLabel}</span> — <span className="font-mono text-gray-600 font-bold">S/N: {foto.serie}</span>
-                          <div className="text-[9.5px] text-[#E30613] font-medium truncate">{foto.etiqueta} (Etapa Recepción)</div>
-                        </div>
+              {/* Bloques de evidencias organizados por cada radio */}
+              <div className="space-y-6">
+                {equiposConFotos.map((eqFoto, eqIdx) => (
+                  <div key={eqIdx} className="border border-gray-300 rounded-2xl p-4 bg-slate-50/60 space-y-4 break-inside-avoid shadow-xs">
+                    {/* Encabezado del Radio */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-gray-300">
+                      <div className="flex items-center gap-2">
+                        <span className="w-6 h-6 rounded-lg bg-gray-900 text-white text-xs font-black flex items-center justify-center shrink-0">
+                          {eqIdx + 1}
+                        </span>
+                        <h3 className="font-black text-sm text-gray-900 uppercase">
+                          {eqFoto.handyLabel}
+                        </h3>
                       </div>
-                    ))
-                  )}
-                </div>
+                      <span className="font-mono text-xs font-bold bg-white border border-gray-300 px-3 py-1 rounded-lg text-gray-900 self-start sm:self-auto">
+                        S/N: {eqFoto.serie}
+                      </span>
+                    </div>
 
-                {/* Columna B: Fotos de Diagnóstico */}
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2 pb-1 border-b border-gray-300">
-                    <Sparkles size={14} className="text-blue-600" />
-                    <h3 className="font-black text-xs uppercase text-gray-900">
-                      Fotos de Diagnóstico (Estado Interno / Placa)
-                    </h3>
-                  </div>
-
-                  {fotosDiagnostico.length === 0 ? (
-                    <p className="text-[11px] text-gray-400 italic">No se registraron fotos internas en laboratorio.</p>
-                  ) : (
-                    fotosDiagnostico.map((foto, idx) => (
-                      <div key={idx} className="border border-gray-300 p-2 bg-slate-50 rounded-xl space-y-1 break-inside-avoid shadow-xs">
-                        <img
-                          src={foto.url}
-                          alt={foto.etiqueta}
-                          className="w-full h-44 object-contain rounded bg-white"
-                        />
-                        <div className="text-[10.5px] text-gray-800 text-center font-semibold pt-1">
-                          <span className="font-bold text-gray-900">{foto.equipoLabel}</span> — <span className="font-mono text-gray-600 font-bold">S/N: {foto.serie}</span>
-                          <div className="text-[9.5px] text-blue-700 font-medium truncate">{foto.etiqueta} (Laboratorio RF)</div>
+                    {/* Dos Bloques Claros por Radio */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Bloque 1: Registro de Ingreso (Recepción) */}
+                      <div className="space-y-2.5 bg-white p-3.5 rounded-xl border border-gray-200">
+                        <div className="flex items-center gap-2 pb-1.5 border-b border-gray-200">
+                          <Camera size={14} className="text-[#E30613]" />
+                          <h4 className="font-black text-xs uppercase text-gray-900">
+                            Registro de Ingreso (Recepción)
+                          </h4>
+                          <span className="ml-auto text-[10px] font-bold text-gray-500">
+                            ({eqFoto.reception.length})
+                          </span>
                         </div>
+
+                        {eqFoto.reception.length === 0 ? (
+                          <p className="text-[11px] text-gray-400 italic py-4 text-center">
+                            Sin fotos de ingreso registradas en mostrador.
+                          </p>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-2.5">
+                            {eqFoto.reception.map((foto, fi) => (
+                              <div key={fi} className="border border-gray-200 p-1.5 bg-slate-50 rounded-lg space-y-1">
+                                <img
+                                  src={foto.url}
+                                  alt={foto.etiqueta}
+                                  className="w-full h-36 object-contain rounded bg-white"
+                                />
+                                <div className="text-[10px] text-gray-800 text-center font-medium truncate pt-0.5">
+                                  {foto.etiqueta}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    ))
-                  )}
-                </div>
+
+                      {/* Bloque 2: Evidencia Técnica de Daños y Laboratorio */}
+                      <div className="space-y-2.5 bg-white p-3.5 rounded-xl border border-gray-200">
+                        <div className="flex items-center gap-2 pb-1.5 border-b border-gray-200">
+                          <Sparkles size={14} className="text-blue-600" />
+                          <h4 className="font-black text-xs uppercase text-gray-900">
+                            Evidencia Técnica de Daños y Laboratorio
+                          </h4>
+                          <span className="ml-auto text-[10px] font-bold text-gray-500">
+                            ({eqFoto.diagnosis.length})
+                          </span>
+                        </div>
+
+                        {eqFoto.diagnosis.length === 0 ? (
+                          <p className="text-[11px] text-gray-400 italic py-4 text-center">
+                            Sin fotos de daños o placa en laboratorio.
+                          </p>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-2.5">
+                            {eqFoto.diagnosis.map((foto, fi) => (
+                              <div key={fi} className="border border-gray-200 p-1.5 bg-slate-50 rounded-lg space-y-1">
+                                <img
+                                  src={foto.url}
+                                  alt={foto.etiqueta}
+                                  className="w-full h-36 object-contain rounded bg-white"
+                                />
+                                <div className="text-[10px] text-blue-900 text-center font-medium truncate pt-0.5">
+                                  {foto.etiqueta}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
 
