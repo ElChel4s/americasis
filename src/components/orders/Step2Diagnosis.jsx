@@ -28,6 +28,7 @@ import QrMobileModal from '@/components/modals/QrMobileModal';
 import ImageCropModal from '@/components/modals/ImageCropModal';
 import RepuestoCombobox from '@/components/common/RepuestoCombobox';
 import { OrdersService } from '@/lib/services/orders.service';
+import { generarDescripcionServicio } from '@/lib/utils/deviceType';
 
 // Lista de los 10 accesorios estándar requeridos
 const ACCESORIOS_DEFAULT = [
@@ -579,7 +580,15 @@ export default function Step2Diagnosis({
     estado_individual: reparacionRechazada ? 'RECHAZADO' : 'EN_DIAGNOSTICO',
     texto_diagnostico: textoDiagnostico,
     notas_adicionales: notasAdicionales,
-    descripcion_servicio: equipo.descripcion_servicio || 'Mantenimiento preventivo, limpieza ultrasónica y calibración RF en monitor de servicio',
+    descripcion_servicio: equipo.descripcion_servicio_manual && equipo.descripcion_servicio
+      ? equipo.descripcion_servicio
+      : generarDescripcionServicio({
+          ...equipo,
+          fallas: fallasSeleccionadas,
+          repuestos: repuestos,
+          texto_diagnostico: textoDiagnostico,
+          no_autorizo_revision: reparacionRechazada
+        }),
     costo_servicio: subtotal1_servicio,
     fallas: fallasSeleccionadas,
     repuestos: repuestos,

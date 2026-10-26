@@ -7,11 +7,12 @@ import ImageCropModal from '@/components/modals/ImageCropModal';
 import BarcodeScannerModal from '@/components/modals/BarcodeScannerModal';
 import EquipmentTabs from '@/components/orders/EquipmentTabs';
 import { OrdersService } from '@/lib/services/orders.service';
-
+import { TIPOS_DISPOSITIVO, CATALOGOS_ACCESORIOS_POR_TIPO, getDeviceType, getDevicePrefix } from '@/lib/utils/deviceType';
 
 const MARCAS_RADIO = ['Motorola', 'Vertex Standard', 'Yaesu', 'Kenwood', 'Icom', 'Hytera', 'Baofeng', 'Otro'];
-const MODELOS_COMUNES = ['DEP450', 'PRO5150', 'EP450', 'DGM4100', 'DGP8550', 'VX-2100', 'VX-2200', 'FT-2980R', 'EM200'];
+const MODELOS_COMUNES = ['DEP450', 'PRO5150', 'EP450', 'DGM4100', 'DGP8550', 'VX-2100', 'VX-2200', 'FT-2980R', 'EM200', 'FTM-3100'];
 const DEFAULT_CATALOGO = ['Antena', 'Batería', 'Cargador de Base', 'Clip de Cinturón', 'Micrófono de Palma', 'Manos Libres / PTT', 'Eliminador de Batería', 'Funda de Cuero', 'Otros'];
+
 
 export default function Step1Reception({ 
   formData = { ordenServicio: '', cliente: '', equipos: [{ id: '1', accesoriosRecepcion: {} }] }, 
@@ -56,6 +57,12 @@ export default function Step1Reception({
   const fileInputRef = useRef(null);
 
   const equipo = formData.equipos[activeEquipoIndex] || {};
+  const currentTipo = getDeviceType(equipo);
+  const catalogoActivo = currentTipo === 'Radio Móvil / Base'
+    ? CATALOGOS_ACCESORIOS_POR_TIPO['Radio Móvil / Base']
+    : (currentTipo === 'Repetidora / Estación Base'
+      ? CATALOGOS_ACCESORIOS_POR_TIPO['Repetidora / Estación Base']
+      : catalogoRecepcion);
 
   const handleAgregarAccesorio = (e) => {
     if (e) e.preventDefault();
@@ -334,8 +341,29 @@ export default function Step1Reception({
         {/* Left Column: Main data */}
         <div className="lg:col-span-7 space-y-5">
           <div className="card space-y-5">
-            {/* Marca + Modelo */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Tipo de Dispositivo + Marca + Modelo */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className="input-label flex items-center justify-between">
+                  <span>Tipo Dispositivo</span>
+                  <span className="text-[10px] text-red-600 font-bold uppercase">{getDevicePrefix(equipo)}</span>
+                </label>
+                <select 
+                  className="input-field cursor-pointer font-bold text-gray-800 bg-slate-50 border-slate-300 focus:bg-white focus:border-red-500"
+                  value={equipo.tipo_dispositivo || currentTipo}
+                  onChange={(e) => {
+                    const nuevoTipo = e.target.value;
+                    updateEquipo(activeEquipoIndex, { 
+                      tipo_dispositivo: nuevoTipo,
+                      tipoDispositivo: nuevoTipo
+                    });
+                  }}
+                >
+                  {TIPOS_DISPOSITIVO.map(t => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </div>
               <div>
                 <label className="input-label">Marca</label>
                 <select 
@@ -352,10 +380,19 @@ export default function Step1Reception({
                 <input 
                   type="text" 
                   list="modelos-comunes-list"
-                  placeholder="Ej. DEP450, VX-2100"
-                  className="input-field uppercase"
+                  placeholder="Ej. DEP450, VX-2100, FTM-3100"
+                  className="input-field uppercase font-bold text-gray-900"
                   value={equipo.modelo || ''}
-                  onChange={(e) => updateEquipo(activeEquipoIndex, { modelo: e.target.value })}
+                  onChange={(e) => {
+                    const nuevoModelo = e.target.value;
+                    const updates = { modelo: nuevoModelo };
+                    if (!equipo.tipo_dispositivo) {
+                      const detected = getDeviceType({ ...equipo, modelo: nuevoModelo });
+                      updates.tipo_dispositivo = detected;
+                      updates.tipoDispositivo = detected;
+                    }
+                    updateEquipo(activeEquipoIndex, updates);
+                  }}
                 />
                 <datalist id="modelos-comunes-list">
                   {MODELOS_COMUNES.map(m => (
@@ -465,9 +502,12 @@ export default function Step1Reception({
             <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
               <div className="flex items-center gap-2">
                 <Settings2 size={16} className="text-[#E30613]"/>
-                <h3 className="text-gray-900 font-bold text-sm">
-                  Inventario de Accesorios (Recepción)
-                </h3>
+                <div>
+                  <h3 className="text-gray-900 font-bold text-sm leading-tight">
+                    Inventario de Accesorios
+                  </h3>
+                  <span className="text-[10px] font-bold text-gray-500 uppercase">{currentTipo}</span>
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
@@ -486,7 +526,7 @@ export default function Step1Reception({
 
             {/* Lista de Accesorios con marcado CON / SIN */}
             <div className="p-4 space-y-2 max-h-[380px] overflow-y-auto scrollbar-thin">
-              {catalogoRecepcion.map((item) => {
+              {catalogoActivo.map((item) => {
                 const accesoriosObj = equipo.accesoriosRecepcion || {};
                 const val = accesoriosObj[item] || 'SIN';
                 const isOtros = item.toLowerCase() === 'otros';
@@ -505,7 +545,7 @@ export default function Step1Reception({
                         <span className="text-xs sm:text-sm font-semibold text-gray-800 truncate">
                           {item}
                         </span>
-                        {!['Antena', 'Batería', 'Cargador de Base', 'Clip de Cinturón', 'Otros'].includes(item) && (
+                        {!['Antena', 'Batería', 'Cargador de Base', 'Clip de Cinturón', 'Micrófono de Palma', 'Cable de Alimentación DC', 'Soporte de Montaje', 'Otros'].includes(item) && (
                           <button
                             type="button"
                             onClick={() => eliminarAccesorioRecepcion(item)}
@@ -577,6 +617,74 @@ export default function Step1Reception({
                         >
                           <option value="Operativa">Operativa</option>
                           <option value="Se sugiere reemplazo">Se sugiere reemplazo</option>
+                        </select>
+                      </div>
+                    )}
+
+                    {item === 'Micrófono de Palma' && val === 'CON' && (
+                      <div className="mt-2 pt-2 border-t border-slate-200 w-full animate-slideUp grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Tipo de Conector</label>
+                          <select
+                            className="w-full px-3 py-1.5 rounded-lg text-xs bg-white text-gray-900 border border-slate-300 focus:border-[#E30613] outline-none font-medium"
+                            value={accesoriosObj[`${item}_conector`] || 'RJ45 Modular (8 pines)'}
+                            onChange={(e) => updateEquipo(activeEquipoIndex, { 
+                              accesoriosRecepcion: { ...accesoriosObj, [`${item}_conector`]: e.target.value } 
+                            })}
+                          >
+                            <option value="RJ45 Modular (8 pines)">RJ45 Modular (8 pines)</option>
+                            <option value="8 Pines Redondo">8 Pines Redondo</option>
+                            <option value="10 Pines Modular">10 Pines Modular</option>
+                            <option value="Conector Estándar / Otro">Conector Estándar / Otro</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Estado del Micrófono</label>
+                          <select
+                            className="w-full px-3 py-1.5 rounded-lg text-xs bg-white text-gray-900 border border-slate-300 focus:border-[#E30613] outline-none font-medium"
+                            value={accesoriosObj[`${item}_estado`] || 'Operativo'}
+                            onChange={(e) => updateEquipo(activeEquipoIndex, { 
+                              accesoriosRecepcion: { ...accesoriosObj, [`${item}_estado`]: e.target.value } 
+                            })}
+                          >
+                            <option value="Operativo">Operativo</option>
+                            <option value="Cable resortado estirado/desgastado">Cable resortado estirado/desgastado</option>
+                            <option value="Pulsador PTT defectuoso">Pulsador PTT defectuoso</option>
+                            <option value="Se sugiere cambio">Se sugiere cambio</option>
+                          </select>
+                        </div>
+                      </div>
+                    )}
+
+                    {item === 'Cable de Alimentación DC' && val === 'CON' && (
+                      <div className="mt-2 pt-2 border-t border-slate-200 w-full animate-slideUp">
+                        <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Estado del Cable DC</label>
+                        <select
+                          className="w-full px-3 py-1.5 rounded-lg text-xs bg-white text-gray-900 border border-slate-300 focus:border-[#E30613] outline-none font-medium"
+                          value={accesoriosObj[`${item}_estado`] || 'Original con portafusible'}
+                          onChange={(e) => updateEquipo(activeEquipoIndex, { 
+                            accesoriosRecepcion: { ...accesoriosObj, [`${item}_estado`]: e.target.value } 
+                          })}
+                        >
+                          <option value="Original con portafusible">Original con portafusible</option>
+                          <option value="Cable adaptado / empalmado">Cable adaptado / empalmado</option>
+                          <option value="Sin portafusible">Sin portafusible</option>
+                        </select>
+                      </div>
+                    )}
+
+                    {item === 'Soporte de Montaje' && val === 'CON' && (
+                      <div className="mt-2 pt-2 border-t border-slate-200 w-full animate-slideUp">
+                        <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Accesorios de Fijación</label>
+                        <select
+                          className="w-full px-3 py-1.5 rounded-lg text-xs bg-white text-gray-900 border border-slate-300 focus:border-[#E30613] outline-none font-medium"
+                          value={accesoriosObj[`${item}_perillas`] || 'Con soporte y perillas laterales'}
+                          onChange={(e) => updateEquipo(activeEquipoIndex, { 
+                            accesoriosRecepcion: { ...accesoriosObj, [`${item}_perillas`]: e.target.value } 
+                          })}
+                        >
+                          <option value="Con soporte y perillas laterales">Con soporte y perillas laterales</option>
+                          <option value="Solo soporte metálico (sin perillas)">Solo soporte metálico (sin perillas)</option>
                         </select>
                       </div>
                     )}
@@ -845,7 +953,7 @@ export default function Step1Reception({
         onScan={(scannedCode) => {
           updateEquipo(activeEquipoIndex, { serie: scannedCode });
         }}
-        title={`Lector Móvil — Handy #${activeEquipoIndex + 1}`}
+        title={`Lector Móvil — ${getDevicePrefix(equipo)} #${activeEquipoIndex + 1}`}
         subtitle="Escanea el código QR con tu celular para enviar el serial directamente a este campo"
       />
     </div>

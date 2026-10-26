@@ -44,13 +44,14 @@ export async function PUT(request, { params }) {
       return successResponse(result, 'Datos de recepción actualizados exitosamente');
     }
 
-    // 2. Si viene asignación de técnico, estado general, presupuesto o condiciones
+    // 3. Si viene asignación de técnico, estado general, presupuesto, equipos o condiciones
     if (
       body.estado || 
       body.status || 
       body.condiciones || 
       body.sumatoria_total !== undefined || 
       body.moneda ||
+      body.equipos ||
       body.usuario_tecnico_id !== undefined ||
       body.tecnico_nombre_manual !== undefined ||
       body.condiciones_comerciales_json !== undefined

@@ -16,7 +16,7 @@ import {
 } from '@/lib/utils/currencyFormat';
 import { generateDocxBlob } from '@/lib/utils/docxExport';
 import { UsersService } from '@/lib/services/users.service';
-import { resolveImageUrl } from '@/lib/services/orders.service';
+import { formatEquipmentReceptionText, getDevicePrefix, getDeviceFullLabel, getDescripcionEfectiva } from '@/lib/utils/deviceType';
 
 function formatFechaBolivia(date = new Date()) {
   const MESES = [
@@ -241,8 +241,8 @@ export default function Step4ReportPreview({
 
     (formData.equipos || []).forEach((eq, eqIdx) => {
       const handyNum = eq.orden_indice || (eqIdx + 1);
-      const handyLabel = `${eq.marca || 'Motorola'} ${eq.modelo || `Handy #${handyNum}`}`.trim();
-      const serie = eq.serie || eq.numero_serie || `Handy #${handyNum}`;
+      const handyLabel = getDeviceFullLabel(eq, handyNum);
+      const serie = eq.serie || eq.numero_serie || `S/N #${handyNum}`;
 
       // 1. Recolectar candidatos de fotos de recepción (exterior)
       const rawRecepcion = [
@@ -628,13 +628,7 @@ export default function Step4ReportPreview({
               <ul className="list-disc list-inside space-y-1 text-xs text-gray-800 pl-2">
                 {(formData.equipos || []).map((eq, idx) => (
                   <li key={eq.id || idx}>
-                    <span className="font-bold">
-                      Handy {eq.marca || 'Motorola'} {eq.modelo || 'Radio'} {eq.banda || 'VHF'}
-                    </span>
-                    {' – '}
-                    <span className="font-mono">Serie: {eq.serie || eq.numero_serie || 'S/N'}</span>
-                    {' - '}
-                    <span>{getAccesoriosRecepcionStr(eq)}.</span>
+                    <span>{formatEquipmentReceptionText(eq)}</span>
                   </li>
                 ))}
               </ul>
@@ -649,7 +643,7 @@ export default function Step4ReportPreview({
               {(formData.equipos || []).map((eq, idx) => (
                 <div key={eq.id || idx} className="space-y-1 text-xs pl-1">
                   <p className="font-black text-gray-900">
-                    [{idx + 1}]. {eq.marca || 'Motorola'} {eq.modelo || 'Radio'} {eq.banda || 'VHF'} – Serie: {eq.serie || eq.numero_serie || 'S/N'}, se realizó la revisión general del equipo:
+                    [{idx + 1}]. {getDevicePrefix(eq)} {eq.marca || 'Motorola'} {eq.modelo || 'Radio'} {eq.banda || 'VHF'} – Serie: {eq.serie || eq.numero_serie || 'S/N'}, se realizó la revisión general del equipo:
                   </p>
 
                   {eq.reparacion_rechazada ? (
@@ -658,6 +652,13 @@ export default function Step4ReportPreview({
                     </p>
                   ) : (
                     <div className="space-y-0.5 pl-3">
+                      {/* Dictamen técnico redactado por el técnico / ajustado en presupuesto */}
+                      {eq.texto_diagnostico && (
+                        <p className="text-gray-900 font-semibold leading-relaxed">
+                          - {eq.texto_diagnostico}
+                        </p>
+                      )}
+
                       {/* Viñetas de placa */}
                       {eq.fallas && eq.fallas.length > 0 ? (
                         eq.fallas.map((f, fi) => (
@@ -666,9 +667,11 @@ export default function Step4ReportPreview({
                           </p>
                         ))
                       ) : (
-                        <p className="text-gray-800">
-                          - El equipo presenta desgaste por uso operativo, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.
-                        </p>
+                        !eq.texto_diagnostico && (
+                          <p className="text-gray-800">
+                            - El equipo presenta desgaste por uso operativo, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.
+                          </p>
+                        )
                       )}
 
                       {/* Viñeta antena */}
@@ -735,12 +738,12 @@ export default function Step4ReportPreview({
               <div className="space-y-1.5 pt-1">
                 {(formData.equipos || []).map((eq, idx) => {
                   const costo = parseFloat(eq.costo_servicio) || 0;
-                  const desc = eq.descripcion_servicio || '(Servicio técnico, revisión general, limpieza, ajuste-calibración de parámetros y mantenimiento general)';
+                  const desc = getDescripcionEfectiva(eq);
 
                   return (
                     <div key={eq.id || idx} className="text-xs">
                       <div className="flex justify-between items-center font-bold text-gray-900">
-                        <span>{eq.marca || 'Radio'} {eq.modelo || ''} – Serie: {eq.serie || eq.numero_serie || 'S/N'}</span>
+                        <span>{getDevicePrefix(eq)} {eq.marca || 'Radio'} {eq.modelo || ''} – Serie: {eq.serie || eq.numero_serie || 'S/N'}</span>
                         <span className="font-mono">{formatCurrency(costo, moneda)}</span>
                       </div>
                       <p className="text-[11px] text-gray-600 italic pl-2">
@@ -750,17 +753,19 @@ export default function Step4ReportPreview({
                   );
                 })}
 
-                {/* Línea de Cierre Subtotal 1 */}
-                <div className="flex justify-between items-center font-bold text-xs pt-1 border-t border-dotted border-gray-400">
-                  <span>Sub total 1 Servicio técnico ...................................................</span>
-                  <span className="font-mono font-black">{formatCurrency(subtotal1, moneda)}</span>
-                </div>
+                {/* Si no hay repuestos cotizados (subtotal2 === 0), no mostramos Subtotales ni SUMATORIA TOTAL */}
+                {subtotal2 > 0 && (
+                  <div className="flex justify-between items-center font-bold text-xs pt-1 border-t border-dotted border-gray-400">
+                    <span>Sub total 1 Servicio técnico ...................................................</span>
+                    <span className="font-mono font-black">{formatCurrency(subtotal1, moneda)}</span>
+                  </div>
+                )}
               </div>
 
-              {/* Bloque 2: Accesorios (Solo si existen) */}
-              {accesoriosCotizados.length > 0 && (
+              {/* Bloque 2: Accesorios y Repuestos Cotizados (Solo si existen) */}
+              {subtotal2 > 0 && accesoriosCotizados.length > 0 && (
                 <div className="space-y-1 pt-1.5">
-                  <p className="font-bold text-xs text-gray-900">Accesorios:</p>
+                  <p className="font-bold text-xs text-gray-900">Accesorios y Repuestos Cotizados:</p>
                   {accesoriosCotizados.map((acc, ai) => {
                     const itemTotal = acc.cantidad * acc.precio;
                     return (
@@ -776,33 +781,58 @@ export default function Step4ReportPreview({
 
                   {/* Línea de Cierre Subtotal 2 */}
                   <div className="flex justify-between items-center font-bold text-xs pt-1 border-t border-dotted border-gray-400">
-                    <span>Sub total 2 Accesorios .........................................................</span>
+                    <span>Sub total 2 Accesorios y Repuestos Cotizados ...................................</span>
                     <span className="font-mono font-black">{formatCurrency(subtotal2, moneda)}</span>
                   </div>
                 </div>
               )}
 
-              {/* Sumatoria Total */}
-              <div className="pt-2 border-t-2 border-gray-900">
-                <div className="flex justify-between items-center font-black text-xs sm:text-sm text-gray-900">
-                  <span className="tracking-tight">
-                    SUMATORIA TOTAL: Servicio técnico + Accesorios ----------------------------------------
-                  </span>
-                  <span className="font-mono text-sm sm:text-base">{formatCurrency(sumatoriaTotal, moneda)}</span>
-                </div>
+              {/* Liquidación Final: Condicional según regla de negocio */}
+              {subtotal2 === 0 ? (
+                <div className="pt-2 border-t-2 border-gray-900">
+                  <div className="flex justify-between items-center font-black text-xs sm:text-sm text-gray-900">
+                    <span className="tracking-tight">
+                      TOTAL SERVICIO TÉCNICO:
+                    </span>
+                    <span className="font-mono text-sm sm:text-base">{formatCurrency(subtotal1, moneda)}</span>
+                  </div>
 
-                {/* Importe Literal Oficial */}
-                <p className="text-xs font-bold text-gray-900 uppercase pt-1">
-                  {getImporteLiteral(sumatoriaTotal, moneda)}
-                </p>
-
-                {/* Cláusula cambiaria obligatoria para USD */}
-                {moneda === 'USD' && (
-                  <p className="text-[11.5px] font-black text-gray-900 pt-1 leading-snug">
-                    {CLAUSULA_CAMBIARIA_USD}
+                  {/* Importe Literal Oficial de Servicio Técnico */}
+                  <p className="text-xs font-bold text-gray-900 uppercase pt-1">
+                    {getImporteLiteral(subtotal1, moneda)}
                   </p>
-                )}
-              </div>
+
+                  {/* Cláusula cambiaria obligatoria para USD: texto regular, solo 'Nota:' en negrita */}
+                  {moneda === 'USD' && (
+                    <p className="text-[11px] text-gray-700 pt-1.5 leading-snug">
+                      <strong className="font-bold text-gray-900">Nota:</strong>{' '}
+                      <span>Precios en USD, pagaderos en Bs al TC oficial del día de pago. Sujetos a reconfirmación si las condiciones cambiarias varían significativamente.</span>
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="pt-2 border-t-2 border-gray-900">
+                  <div className="flex justify-between items-center font-black text-xs sm:text-sm text-gray-900">
+                    <span className="tracking-tight">
+                      SUMATORIA TOTAL: Servicio técnico + Accesorios ----------------------------------------
+                    </span>
+                    <span className="font-mono text-sm sm:text-base">{formatCurrency(sumatoriaTotal, moneda)}</span>
+                  </div>
+
+                  {/* Importe Literal Oficial de Sumatoria Total */}
+                  <p className="text-xs font-bold text-gray-900 uppercase pt-1">
+                    {getImporteLiteral(sumatoriaTotal, moneda)}
+                  </p>
+
+                  {/* Cláusula cambiaria obligatoria para USD: texto regular, solo 'Nota:' en negrita */}
+                  {moneda === 'USD' && (
+                    <p className="text-[11px] text-gray-700 pt-1.5 leading-snug">
+                      <strong className="font-bold text-gray-900">Nota:</strong>{' '}
+                      <span>Precios en USD, pagaderos en Bs al TC oficial del día de pago. Sujetos a reconfirmación si las condiciones cambiarias varían significativamente.</span>
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* F. Sección 5: Términos Comerciales y Políticas */}

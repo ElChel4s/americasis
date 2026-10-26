@@ -39,8 +39,9 @@ export default function EquipmentTabs({ equipos = [], activeIndex = 0, onSelect,
             >
               <Radio size={14} className={active ? 'text-red-500' : 'text-gray-400'} />
               <span className={rechazado ? 'line-through decoration-red-400/60' : ''}>
-                <span className="text-gray-400 font-semibold mr-1">{idx + 1}:</span>
+                <span className="text-gray-400 font-semibold mr-1">Radio {idx + 1}:</span>
                 {equipo.modelo || `Equipo ${idx + 1}`}
+                {(equipo.serie || equipo.numero_serie) ? ` (${equipo.serie || equipo.numero_serie})` : ''}
               </span>
               <span className={`text-[9px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded ${estado.cls}`}>
                 {estado.label}

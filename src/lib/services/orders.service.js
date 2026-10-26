@@ -18,7 +18,7 @@
 const STORAGE_KEY = 'americasis_orders';
 const LEGACY_STORAGE_KEY = 'america_orders_db';
 
-import { UsersService, normalizeEmail } from './users.service';
+import { UsersService, normalizeEmail } from './users.service.js';
 
 // Almacén en memoria RAM para imágenes de alta resolución en la sesión activa
 const inMemoryOrderImages = new Map();
@@ -257,12 +257,26 @@ const mergeOrderPreservingPhotos = (serverOrder, localOrder) => {
       ? sEq.accesoriosRecepcion
       : (lEq.accesoriosRecepcion || {});
 
+    const costoServicio = sEq.costo_servicio !== undefined && sEq.costo_servicio !== null
+      ? sEq.costo_servicio
+      : (lEq.costo_servicio !== undefined ? lEq.costo_servicio : 150);
+
+    const textoDiag = sEq.texto_diagnostico || lEq.texto_diagnostico || '';
+    const descServicio = sEq.descripcion_servicio || lEq.descripcion_servicio || '';
+    const descManual = Boolean(sEq.descripcion_servicio_manual !== undefined ? sEq.descripcion_servicio_manual : lEq.descripcion_servicio_manual);
+    const noAutorizo = Boolean(sEq.no_autorizo_revision !== undefined ? sEq.no_autorizo_revision : lEq.no_autorizo_revision);
+
     return {
       ...lEq,
       ...sEq,
       id: sEq.id || lEq.id || `eq-${idx + 1}`,
       tempId: sEq.tempId || lEq.tempId || sEq.id || lEq.id,
       orden_indice: sEq.orden_indice || lEq.orden_indice || (idx + 1),
+      costo_servicio: costoServicio,
+      texto_diagnostico: textoDiag,
+      descripcion_servicio: descServicio,
+      descripcion_servicio_manual: descManual,
+      no_autorizo_revision: noAutorizo,
       accesoriosRecepcion: accObj,
       imagenes: finalImgs,
       imagenesRecepcion: finalImgs,
@@ -658,6 +672,10 @@ export const OrdersService = {
         banda: eq.banda,
         falla_declarada_cliente: eq.falla_declarada_cliente,
         costo_servicio: eq.costo_servicio,
+        descripcion_servicio: eq.descripcion_servicio || '',
+        texto_diagnostico: eq.texto_diagnostico || '',
+        descripcion_servicio_manual: Boolean(eq.descripcion_servicio_manual),
+        no_autorizo_revision: Boolean(eq.no_autorizo_revision),
         accesorios: eq.accesorios,
         accesoriosRecepcion: eq.accesoriosRecepcion,
         imagenes: eq.imagenes || eq.imagenesRecepcion || [],
@@ -785,6 +803,10 @@ export const OrdersService = {
             banda: eq.banda || 'VHF',
             falla_declarada_cliente: eq.falla_declarada_cliente || '',
             costo_servicio: eq.costo_servicio || 0,
+            descripcion_servicio: eq.descripcion_servicio || '',
+            texto_diagnostico: eq.texto_diagnostico || '',
+            descripcion_servicio_manual: Boolean(eq.descripcion_servicio_manual),
+            no_autorizo_revision: Boolean(eq.no_autorizo_revision),
             accesorios: eq.accesorios || [],
             accesoriosRecepcion: eq.accesoriosRecepcion || {},
             imagenes: eq.imagenes || eq.imagenesRecepcion || [],
@@ -955,36 +977,91 @@ export const OrdersService = {
   },
 
   /**
-   * Guarda el presupuesto económico y transiciona a COTIZADO
+   * Guarda el presupuesto económico, mano de obra por radio y transiciona a COTIZADO
    */
-  saveBudget: async (id, { moneda, equipos, condiciones, sumatoria_total }) => {
+  saveBudget: async (id, { moneda, equipos, condiciones, sumatoria_total, monto_subtotal_servicio, monto_subtotal_accesorios }) => {
     if (typeof window === 'undefined') return null;
+
+    // Calcular subtotales
+    const subtotal1 = monto_subtotal_servicio !== undefined ? monto_subtotal_servicio : (equipos || []).reduce((sum, eq) => {
+      if (eq.reparacion_rechazada && !eq.no_autorizo_revision) return sum;
+      return sum + (parseFloat(eq.costo_servicio) || 0);
+    }, 0);
+
+    const subtotal2 = monto_subtotal_accesorios !== undefined ? monto_subtotal_accesorios : (equipos || []).reduce((sum, eq) => {
+      return sum + (eq.repuestos || []).filter(r => r.se_reemplaza).reduce((s, r) => {
+        return s + ((parseInt(r.cantidad, 10) || 1) * (parseFloat(r.precio) || 0));
+      }, 0);
+    }, 0);
+
+    const total = sumatoria_total !== undefined ? Number(sumatoria_total) : Number((subtotal1 + subtotal2).toFixed(2));
+
+    // Normalizar equipos asegurando que costo_servicio, descripcion_servicio y texto_diagnostico viajen consistentes
+    const sanitizedEquipos = (equipos || []).map(eq => {
+      const costo = parseFloat(eq.costo_servicio) || 0;
+      const desc = eq.descripcion_servicio || '';
+      const diag = eq.texto_diagnostico || '';
+      return {
+        ...eq,
+        costo_servicio: costo,
+        descripcion_servicio: desc,
+        descripcion_servicio_manual: Boolean(eq.descripcion_servicio_manual),
+        texto_diagnostico: diag
+      };
+    });
+
+    let serverData = null;
     try {
-      await fetch(`/api/orders/${id}`, {
+      const res = await fetch(`/api/orders/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           estado: 'COTIZADO',
           moneda,
+          equipos: sanitizedEquipos,
           condiciones,
-          sumatoria_total
+          monto_subtotal_servicio: subtotal1,
+          monto_subtotal_accesorios: subtotal2,
+          sumatoria_total: total
         })
       });
-    } catch (e) {}
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.data) {
+          serverData = json.data;
+        }
+      }
+    } catch (e) {
+      console.warn('[OrdersService] Error conectando con API al guardar presupuesto:', e);
+    }
 
-    const orders = await OrdersService.getOrders();
-    const index = orders.findIndex(o => String(o.id) === String(id));
+    const orders = getStoredLocalOrders();
+    const index = orders.findIndex(o => String(o.id) === String(id) || String(o.numero_orden) === String(id));
     if (index >= 0) {
-      orders[index].moneda = moneda || orders[index].moneda || 'BOB';
-      if (equipos) orders[index].equipos = equipos;
-      if (condiciones) orders[index].condiciones = condiciones;
-      if (sumatoria_total !== undefined) orders[index].sumatoria_total = sumatoria_total;
-      orders[index].estado = 'COTIZADO';
-      orders[index].estado_global = 'COTIZADO';
-      orders[index].updatedAt = new Date().toISOString();
+      const prev = orders[index];
+      const updated = {
+        ...prev,
+        ...(serverData || {}),
+        moneda: moneda || serverData?.moneda || prev.moneda || 'BOB',
+        equipos: sanitizedEquipos.length > 0 ? sanitizedEquipos : (serverData?.equipos || prev.equipos || []),
+        condiciones: condiciones || serverData?.condiciones || prev.condiciones || {},
+        monto_subtotal_servicio: subtotal1,
+        monto_subtotal_accesorios: subtotal2,
+        sumatoria_total: total,
+        estado: 'COTIZADO',
+        estado_global: 'COTIZADO',
+        updatedAt: new Date().toISOString()
+      };
+
+      orders[index] = updated;
       safeSaveLocalStorage(orders);
       broadcastOrdersUpdate(orders[index]);
       return rehydrateOrder(orders[index]);
+    } else if (serverData) {
+      orders.unshift(serverData);
+      safeSaveLocalStorage(orders);
+      broadcastOrdersUpdate(serverData);
+      return rehydrateOrder(serverData);
     }
     return null;
   },

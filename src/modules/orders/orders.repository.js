@@ -1026,18 +1026,15 @@ export const OrdersRepository = {
   },
 
   /**
-   * Actualiza datos generales de una orden (estado, condiciones, presupuesto, notas)
+   * Actualiza datos generales de una orden (estado, condiciones, presupuesto por radio, subtotales, notas)
    */
   async updateOrderGeneral(orderId, updateData) {
     const estado = updateData.estado || updateData.status;
+    const resolvedOrderId = await this.resolveOrderUuid(orderId) || orderId;
     const fieldsToUpdate = {};
     if (estado) fieldsToUpdate.estado = estado;
     if (updateData.moneda) fieldsToUpdate.moneda = updateData.moneda;
     if (updateData.tasa_cambio) fieldsToUpdate.tasa_cambio = updateData.tasa_cambio;
-    if (updateData.sumatoria_total !== undefined) {
-      fieldsToUpdate.sumatoria_total = updateData.sumatoria_total;
-      fieldsToUpdate.total_literal = numeroALetras(updateData.sumatoria_total, updateData.moneda || 'BOB');
-    }
     if (updateData.notas_internas !== undefined) fieldsToUpdate.notas_internas = updateData.notas_internas;
     if (updateData.condiciones) fieldsToUpdate.condiciones_comerciales_json = updateData.condiciones;
     if (updateData.condiciones_comerciales_json) fieldsToUpdate.condiciones_comerciales_json = updateData.condiciones_comerciales_json;
@@ -1045,9 +1042,104 @@ export const OrdersRepository = {
     if (updateData.tecnico_nombre_manual !== undefined) fieldsToUpdate.tecnico_nombre_manual = updateData.tecnico_nombre_manual;
     fieldsToUpdate.actualizado_en = new Date().toISOString();
 
+    // 1. Si vienen equipos (presupuesto por radio, mano de obra y descripción técnica)
+    if (Array.isArray(updateData.equipos) && updateData.equipos.length > 0) {
+      const sumatoria_manos_de_obra = updateData.equipos.reduce((acc, eq) => {
+        if (eq.reparacion_rechazada && !eq.no_autorizo_revision) return acc;
+        return acc + (parseFloat(eq.costo_servicio) || 0);
+      }, 0);
+
+      const sumatoria_repuestos = updateData.equipos.reduce((acc, eq) => {
+        return acc + (eq.repuestos || []).filter(r => r.se_reemplaza).reduce((s, r) => {
+          return s + ((parseInt(r.cantidad, 10) || 1) * (parseFloat(r.precio) || 0));
+        }, 0);
+      }, 0);
+
+      const sumatoria_total = updateData.sumatoria_total !== undefined 
+        ? Number(updateData.sumatoria_total) 
+        : Number((sumatoria_manos_de_obra + sumatoria_repuestos).toFixed(2));
+
+      fieldsToUpdate.monto_subtotal_servicio = sumatoria_manos_de_obra;
+      fieldsToUpdate.monto_subtotal_accesorios = sumatoria_repuestos;
+      fieldsToUpdate.sumatoria_total = sumatoria_total;
+      fieldsToUpdate.total_literal = numeroALetras(sumatoria_total, updateData.moneda || 'BOB');
+
+      if (supabase) {
+        try {
+          for (let i = 0; i < updateData.equipos.length; i++) {
+            const eq = updateData.equipos[i];
+            let eqId = sanitizeUuid(eq.id);
+            if (!eqId) {
+              const idx = eq.orden_indice || (i + 1);
+              const { data: matchedEq } = await supabase
+                .from('orden_equipos')
+                .select('id')
+                .eq('orden_id', resolvedOrderId)
+                .eq('orden_indice', idx)
+                .maybeSingle();
+              if (matchedEq?.id) eqId = matchedEq.id;
+            }
+
+            const eqFields = {
+              costo_servicio: parseFloat(eq.costo_servicio) || 0,
+              descripcion_servicio: eq.descripcion_servicio || '',
+              actualizado_en: new Date().toISOString()
+            };
+            if (eq.texto_diagnostico !== undefined && eq.texto_diagnostico !== null && eq.texto_diagnostico !== '') {
+              eqFields.texto_diagnostico = eq.texto_diagnostico;
+            }
+            if (eq.no_autorizo_revision !== undefined) {
+              eqFields.no_autorizo_revision = Boolean(eq.no_autorizo_revision);
+            }
+            if (eq.reparacion_rechazada !== undefined) {
+              eqFields.reparacion_rechazada = Boolean(eq.reparacion_rechazada);
+            }
+
+            if (eqId) {
+              await supabase.from('orden_equipos').update(eqFields).eq('id', eqId);
+            } else if (eq.serie || eq.numero_serie) {
+              await supabase.from('orden_equipos').update(eqFields)
+                .eq('orden_id', resolvedOrderId)
+                .eq('numero_serie', eq.serie || eq.numero_serie);
+            } else {
+              await supabase.from('orden_equipos').update(eqFields)
+                .eq('orden_id', resolvedOrderId)
+                .eq('orden_indice', eq.orden_indice || (i + 1));
+            }
+          }
+        } catch (eqErr) {
+          console.warn('[OrdersRepository] Supabase update equipos err:', eqErr.message);
+        }
+      }
+
+      // Fallback PostgreSQL para orden_equipos
+      try {
+        for (let i = 0; i < updateData.equipos.length; i++) {
+          const eq = updateData.equipos[i];
+          const costo = parseFloat(eq.costo_servicio) || 0;
+          const desc = eq.descripcion_servicio || '';
+          const diag = eq.texto_diagnostico || '';
+          const eqUuid = sanitizeUuid(eq.id);
+          const serie = eq.serie || eq.numero_serie || '';
+          const idx = eq.orden_indice || (i + 1);
+
+          await query(`
+            UPDATE orden_equipos
+            SET costo_servicio = $1,
+                descripcion_servicio = $2,
+                texto_diagnostico = COALESCE(NULLIF($3, ''), texto_diagnostico),
+                actualizado_en = NOW()
+            WHERE id = $4 OR (orden_id = $5 AND (numero_serie = $6 OR orden_indice = $7))
+          `, [costo, desc, diag, eqUuid, resolvedOrderId, serie, idx]).catch(() => {});
+        }
+      } catch (pgEqErr) {}
+    } else if (updateData.sumatoria_total !== undefined) {
+      fieldsToUpdate.sumatoria_total = updateData.sumatoria_total;
+      fieldsToUpdate.total_literal = numeroALetras(updateData.sumatoria_total, updateData.moneda || 'BOB');
+    }
+
     if (supabase) {
       try {
-        const resolvedOrderId = await this.resolveOrderUuid(orderId);
         const { data, error } = await supabase
           .from('ordenes_servicio')
           .update(fieldsToUpdate)
@@ -1055,7 +1147,11 @@ export const OrdersRepository = {
           .select()
           .single();
 
-        if (!error && data) return data;
+        if (!error) {
+          const full = await this.getOrderWithDetails(resolvedOrderId);
+          if (full) return full;
+          return data;
+        }
       } catch (err) {
         console.warn('[OrdersRepository] Supabase updateOrderGeneral err:', err.message);
       }
@@ -1071,20 +1167,25 @@ export const OrdersRepository = {
             notas_internas = COALESCE($5, notas_internas),
             usuario_tecnico_id = COALESCE($6, usuario_tecnico_id),
             tecnico_nombre_manual = COALESCE($7, tecnico_nombre_manual),
+            monto_subtotal_servicio = COALESCE($8, monto_subtotal_servicio),
+            monto_subtotal_accesorios = COALESCE($9, monto_subtotal_accesorios),
             actualizado_en = NOW()
-        WHERE id = $8
+        WHERE id = $10
         RETURNING *
       `, [
         estado || null,
         updateData.moneda || null,
-        updateData.sumatoria_total !== undefined ? updateData.sumatoria_total : null,
-        updateData.sumatoria_total !== undefined ? numeroALetras(updateData.sumatoria_total, updateData.moneda || 'BOB') : null,
+        fieldsToUpdate.sumatoria_total !== undefined ? fieldsToUpdate.sumatoria_total : null,
+        fieldsToUpdate.total_literal || null,
         updateData.notas_internas || null,
         sanitizeUuid(updateData.usuario_tecnico_id),
         updateData.tecnico_nombre_manual || null,
-        orderId
+        fieldsToUpdate.monto_subtotal_servicio !== undefined ? fieldsToUpdate.monto_subtotal_servicio : null,
+        fieldsToUpdate.monto_subtotal_accesorios !== undefined ? fieldsToUpdate.monto_subtotal_accesorios : null,
+        resolvedOrderId
       ]);
-      return rows[0] || null;
+      const full = await this.getOrderWithDetails(resolvedOrderId);
+      return full || rows[0] || { id: orderId, ...fieldsToUpdate };
     } catch (err) {
       return { id: orderId, ...fieldsToUpdate };
     }

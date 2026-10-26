@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import {
   ArrowLeft, Wrench, ShieldCheck, Printer, FileDown,
@@ -26,6 +26,9 @@ function PresupuestoOrdenContent() {
   const [isSaving, setIsSaving] = useState(false);
   const [feedback, setFeedback] = useState(null);
   const [userRole, setUserRole] = useState('');
+
+  const autoSaveTimerRef = useRef(null);
+  const isInitialMount = useRef(true);
 
   useEffect(() => {
     try {
@@ -97,34 +100,71 @@ function PresupuestoOrdenContent() {
     setTimeout(() => setFeedback(null), 4000);
   };
 
-  // Botón directo exigido: [ Guardar Presupuesto ] -> transiciona a COTIZADO -> /recepcion/inicio
+  // Helper centralizado para persistir presupuesto en BD y localStorage
+  const persistBudget = async (customOrder = null) => {
+    const target = customOrder || order;
+    if (!target || !target.id) return null;
+
+    const subtotal1 = (target.equipos || []).reduce((sum, eq) => {
+      if (eq.reparacion_rechazada && !eq.no_autorizo_revision) return sum;
+      return sum + (parseFloat(eq.costo_servicio) || 0);
+    }, 0);
+
+    const subtotal2 = (target.equipos || []).reduce((sum, eq) => {
+      return sum + (eq.repuestos || []).filter(r => r.se_reemplaza).reduce((s, r) => {
+        return s + ((parseInt(r.cantidad, 10) || 1) * (parseFloat(r.precio) || 0));
+      }, 0);
+    }, 0);
+
+    const total = subtotal1 + subtotal2;
+
+    const saved = await OrdersService.saveBudget(target.id, {
+      moneda: target.moneda || 'BOB',
+      equipos: target.equipos,
+      condiciones: target.condiciones,
+      monto_subtotal_servicio: subtotal1,
+      monto_subtotal_accesorios: subtotal2,
+      sumatoria_total: total
+    });
+
+    if (saved) {
+      setOrder(saved);
+    }
+    return saved || target;
+  };
+
+  // Auto-guardado en segundo plano con debounce (1.5s) para no perder cambios al editar
+  useEffect(() => {
+    if (isInitialMount.current) {
+      if (order && order.id) {
+        isInitialMount.current = false;
+      }
+      return;
+    }
+    if (!order || !order.id) return;
+
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+
+    autoSaveTimerRef.current = setTimeout(() => {
+      persistBudget(order).catch(e => console.warn('[AutoSave Presupuesto]', e));
+    }, 1500);
+
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [order?.equipos, order?.moneda, order?.condiciones]);
+
+  // Botón directo exigido: [ Guardar Presupuesto ] -> transiciona a COTIZADO -> panel de inicio
   const handleGuardarPresupuesto = async () => {
     setIsSaving(true);
     try {
-      const subtotal1 = (order.equipos || []).reduce((sum, eq) => {
-        if (eq.reparacion_rechazada && !eq.no_autorizo_revision) return sum;
-        return sum + (parseFloat(eq.costo_servicio) || 0);
-      }, 0);
-
-      const subtotal2 = (order.equipos || []).reduce((sum, eq) => {
-        return sum + (eq.repuestos || []).filter(r => r.se_reemplaza).reduce((s, r) => {
-          return s + ((parseInt(r.cantidad, 10) || 1) * (parseFloat(r.precio) || 0));
-        }, 0);
-      }, 0);
-
-      const total = subtotal1 + subtotal2;
-
-      await OrdersService.saveBudget(order.id, {
-        moneda: order.moneda || 'BOB',
-        equipos: order.equipos,
-        condiciones: order.condiciones,
-        sumatoria_total: total
-      });
-
+      await persistBudget(order);
       showFeedbackMsg('Presupuesto fijado con éxito. Estado actualizado a COTIZADO.');
       setTimeout(() => {
         router.push(userRole === 'ADMINISTRADOR' ? '/admin/inicio' : '/recepcion/inicio');
-      }, 1000);
+      }, 800);
     } catch (err) {
       console.error('Error al guardar presupuesto:', err);
       showFeedbackMsg('Error al guardar presupuesto.', 'error');
@@ -132,21 +172,39 @@ function PresupuestoOrdenContent() {
     }
   };
 
-  // Botón directo exigido: [ Descargar Word .docx ]
+  // Botón directo a Pantalla Fase 4: Informe A4 / PDF con guardado preventivo obligatorio
+  const handleIrAInforme = async () => {
+    setIsSaving(true);
+    try {
+      await persistBudget(order);
+      router.push(`/recepcion/orden/${order.id}/informe`);
+    } catch (err) {
+      console.error('Error al guardar presupuesto antes de ir a informe:', err);
+      router.push(`/recepcion/orden/${order.id}/informe`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Botón directo exigido: [ Descargar Word .docx ] con guardado preventivo obligatorio
   const handleDownloadDocx = async () => {
     try {
-      const blob = await generateDocxBlob(order);
+      setIsSaving(true);
+      const freshOrder = await persistBudget(order) || order;
+      const blob = await generateDocxBlob(freshOrder);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Informe_Tecnico_${order.numero_orden || order.id}_${order.moneda || 'BOB'}.docx`;
+      a.download = `Informe_Tecnico_${freshOrder.numero_orden || freshOrder.id}_${freshOrder.moneda || 'BOB'}.docx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
     } catch (err) {
-      console.error(err);
+      console.error('Error generando archivo Word:', err);
       alert('Error generando archivo Word.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -333,12 +391,13 @@ function PresupuestoOrdenContent() {
         </div>
 
         <div className="flex items-center gap-2.5 w-full md:w-auto flex-wrap sm:flex-nowrap">
-          {/* Botón directo a Pantalla Fase 4: Informe A4 / PDF */}
+          {/* Botón directo a Pantalla Fase 4: Informe A4 / PDF con guardado preventivo */}
           <button
             type="button"
             id="btn-ir-informe-a4"
-            onClick={() => router.push(`/recepcion/orden/${order.id}/informe`)}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-3 bg-white hover:bg-slate-50 border border-slate-300 font-bold text-xs sm:text-sm text-gray-800 rounded-xl shadow-xs transition-all cursor-pointer"
+            disabled={isSaving}
+            onClick={handleIrAInforme}
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-3 bg-white hover:bg-slate-50 border border-slate-300 font-bold text-xs sm:text-sm text-gray-800 rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-60"
             title="Ir a la pantalla oficial e independiente de Fase 4"
           >
             <Printer size={16} className="text-[#E30613]" />

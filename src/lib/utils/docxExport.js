@@ -10,7 +10,6 @@ import {
   WidthType,
   BorderStyle,
   PageBreak,
-  HeadingLevel,
   Header,
   Footer,
   ImageRun
@@ -22,39 +21,120 @@ import {
   getRevisionCostText,
   normalizeCurrency
 } from './currencyFormat.js';
-import { resolveImageUrl } from '../services/orders.service.js';
+import {
+  formatEquipmentReceptionText,
+  getDevicePrefix,
+  getDeviceFullLabel,
+  getDescripcionEfectiva
+} from './deviceType.js';
+
+function resolveImageUrl(img) {
+  if (!img) return '';
+  if (typeof img === 'string') return img.trim();
+  if (typeof img.url === 'string' && img.url) return img.url.trim();
+  if (typeof img.preview === 'string' && img.preview) return img.preview.trim();
+  if (typeof img.dataUrl === 'string' && img.dataUrl) return img.dataUrl.trim();
+  if (typeof img.data === 'string' && img.data) return img.data.trim();
+  if (typeof img.url_archivo === 'string' && img.url_archivo) return img.url_archivo.trim();
+  return '';
+}
+
+
+/**
+ * Sanitiza valores de texto para evitar que null o undefined corrompan la estructura XML de docx
+ */
+const safeStr = (val) => String(val ?? '').trim();
 
 /**
  * Helper para cargar bytes de imagen tanto en navegador como en entorno Node.js
+ * Devuelve { data: Uint8Array|Buffer, type: 'png' | 'jpg' }
+ * Convierte formatos incompatibles (ej. WebP) a JPEG estándar compatible con Word Desktop.
  */
 async function getImageBytes(urlOrPath) {
   if (!urlOrPath) return null;
   try {
+    // 1. Data URLs
     if (typeof urlOrPath === 'string' && urlOrPath.startsWith('data:')) {
+      const mimeMatch = urlOrPath.match(/^data:image\/([a-zA-Z0-9+]+);base64,/);
+      let imgType = mimeMatch ? mimeMatch[1].toLowerCase() : 'png';
+      if (imgType === 'jpeg') imgType = 'jpg';
+      if (!['png', 'jpg', 'jpeg'].includes(imgType)) imgType = 'png';
+
       const commaIdx = urlOrPath.indexOf(',');
       const base64 = commaIdx !== -1 ? urlOrPath.slice(commaIdx + 1) : urlOrPath;
+
       if (typeof window !== 'undefined') {
         const binary = atob(base64);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) {
           bytes[i] = binary.charCodeAt(i);
         }
-        return bytes;
+        return { data: bytes, type: imgType === 'jpeg' ? 'jpg' : imgType };
       } else {
-        return Buffer.from(base64, 'base64');
+        return { data: Buffer.from(base64, 'base64'), type: imgType === 'jpeg' ? 'jpg' : imgType };
       }
     }
+
+    // 2. Navegador (Client-side)
     if (typeof window !== 'undefined') {
       const res = await fetch(urlOrPath);
       if (!res.ok) return null;
       const blob = await res.blob();
-      return new Uint8Array(await blob.arrayBuffer());
+      const mimeType = blob.type.toLowerCase();
+
+      // Si es PNG (Membrete oficial)
+      if (mimeType.includes('png') || (typeof urlOrPath === 'string' && urlOrPath.endsWith('.png'))) {
+        const arrayBuf = await blob.arrayBuffer();
+        return { data: new Uint8Array(arrayBuf), type: 'png' };
+      }
+
+      // Para fotos de evidencia (WebP, JPG o canvas), convertir en canvas a JPEG estándar
+      if (typeof Image !== 'undefined' && typeof document !== 'undefined') {
+        const converted = await new Promise((resolve) => {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => {
+            try {
+              const canvas = document.createElement('canvas');
+              canvas.width = img.naturalWidth || img.width;
+              canvas.height = img.naturalHeight || img.height;
+              const ctx = canvas.getContext('2d');
+              ctx.fillStyle = '#FFFFFF';
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(img, 0, 0);
+              canvas.toBlob((jpgBlob) => {
+                if (jpgBlob) {
+                  jpgBlob.arrayBuffer().then((buf) => resolve({ data: new Uint8Array(buf), type: 'jpg' }));
+                } else {
+                  blob.arrayBuffer().then((buf) => resolve({ data: new Uint8Array(buf), type: 'png' }));
+                }
+              }, 'image/jpeg', 0.85);
+            } catch (cErr) {
+              blob.arrayBuffer().then((buf) => resolve({ data: new Uint8Array(buf), type: 'png' }));
+            }
+          };
+          img.onerror = () => {
+            blob.arrayBuffer().then((buf) => resolve({ data: new Uint8Array(buf), type: 'png' })).catch(() => resolve(null));
+          };
+          img.src = URL.createObjectURL(blob);
+        });
+        if (converted) return converted;
+      }
+
+      const arrayBuf = await blob.arrayBuffer();
+      const isJpg = mimeType.includes('jpeg') || mimeType.includes('jpg');
+      return { data: new Uint8Array(arrayBuf), type: isJpg ? 'jpg' : 'png' };
     } else {
+      // 3. Servidor Node.js (Pruebas unitarias o generación server-side)
       const fs = await import('fs');
       const path = await import('path');
-      const fullPath = path.join(process.cwd(), 'public', urlOrPath.replace(/^\//, ''));
+      const cleanPath = urlOrPath.replace(/^\//, '');
+      const fullPath = path.join(process.cwd(), 'public', cleanPath);
       if (fs.existsSync(fullPath)) {
-        return fs.readFileSync(fullPath);
+        const fileBytes = fs.readFileSync(fullPath);
+        const ext = path.extname(fullPath).toLowerCase().replace('.', '');
+        const type = (ext === 'jpg' || ext === 'jpeg') ? 'jpg' : 'png';
+        return { data: fileBytes, type };
       }
       return null;
     }
@@ -72,20 +152,21 @@ async function getImageBytes(urlOrPath) {
  */
 export async function generateDocxBlob(formData = {}, currentUser = null) {
   // 0. Cargar membretes oficiales para encabezado y pie de página
-  let headerImgBytes = null;
-  let footerImgBytes = null;
+  let headerImgObj = null;
+  let footerImgObj = null;
   try {
-    headerImgBytes = await getImageBytes('/images/header_membrete.png');
-    footerImgBytes = await getImageBytes('/images/footer_membrete.png');
+    headerImgObj = await getImageBytes('/images/header_membrete.png');
+    footerImgObj = await getImageBytes('/images/footer_membrete.png');
   } catch (err) {
     console.warn('[docxExport] No se pudieron cargar membretes PNG:', err);
   }
+
   const moneda = normalizeCurrency(formData.moneda || 'BOB');
-  const numeroOrden = formData.ordenServicio || formData.numero_orden || (formData.id ? String(formData.id) : '001');
-  const cliente = (formData.cliente || formData.razon_social || 'CLIENTE MOSTRADOR').toUpperCase();
+  const numeroOrden = safeStr(formData.ordenServicio || formData.numero_orden || (formData.id ? String(formData.id) : '001'));
+  const cliente = safeStr(formData.cliente || formData.razon_social || 'CLIENTE MOSTRADOR').toUpperCase();
   const condiciones = formData.condiciones || {};
-  const tecnicoFirmanteNombre = condiciones.tecnicoFirmanteNombre || formData.tecnicoNombre || formData.tecnico_nombre_manual || (currentUser?.rol === 'TECNICO' ? currentUser.nombre_completo : 'Ramiro Condori');
-  const tecnicoFirmanteCargo = condiciones.tecnicoFirmanteCargo || 'Técnico Especialista RF';
+  const tecnicoFirmanteNombre = safeStr(condiciones.tecnicoFirmanteNombre || formData.tecnicoNombre || formData.tecnico_nombre_manual || (currentUser?.rol === 'TECNICO' ? currentUser.nombre_completo : 'Ramiro Condori'));
+  const tecnicoFirmanteCargo = safeStr(condiciones.tecnicoFirmanteCargo || 'Técnico Especialista RF');
 
   const fechaActual = new Date().toLocaleDateString('es-BO', {
     day: 'numeric',
@@ -105,8 +186,8 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
       if (r.se_reemplaza) {
         accesoriosList.push({
           equipoIdx: eqIdx,
-          equipoNombre: `${eq.marca || 'Radio'} ${eq.modelo || `Eq. ${eqIdx + 1}`}`,
-          nombre: r.nombre || r.descripcion || 'Repuesto',
+          equipoNombre: `${safeStr(eq.marca || 'Radio')} ${safeStr(eq.modelo || `Eq. ${eqIdx + 1}`)}`,
+          nombre: safeStr(r.nombre || r.descripcion || 'Repuesto'),
           cantidad: parseInt(r.cantidad, 10) || 1,
           precio: parseFloat(r.precio) || 0,
           es_opcional: Boolean(r.es_opcional)
@@ -114,22 +195,25 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
       }
     });
 
-    if (eq.antenaEstado === 'REEMPLAZO' && !(eq.repuestos || []).some(r => r.nombre?.toLowerCase().includes('antena'))) {
+    if (eq.antenaEstado === 'REEMPLAZO' && !(eq.repuestos || []).some((r) => r.nombre?.toLowerCase().includes('antena'))) {
       accesoriosList.push({
         equipoIdx: eqIdx,
-        equipoNombre: `${eq.marca} ${eq.modelo || `Eq. ${eqIdx + 1}`}`,
-        nombre: `Antena ${eq.banda || 'VHF'} (${eq.antenaModelo || 'Original'})`,
+        equipoNombre: `${safeStr(eq.marca)} ${safeStr(eq.modelo || `Eq. ${eqIdx + 1}`)}`,
+        nombre: `Antena ${safeStr(eq.banda || 'VHF')} (${safeStr(eq.antenaModelo || 'Original')})`,
         cantidad: 1,
         precio: moneda === 'USD' ? 25 : 175,
         es_opcional: true
       });
     }
 
-    if ((eq.bateriaEstado === 'REEMPLAZO' || (parseInt(eq.bateriaCarga, 10) > 0 && parseInt(eq.bateriaCarga, 10) < 70)) && !(eq.repuestos || []).some(r => r.nombre?.toLowerCase().includes('bater'))) {
+    if (
+      (eq.bateriaEstado === 'REEMPLAZO' || (parseInt(eq.bateriaCarga, 10) > 0 && parseInt(eq.bateriaCarga, 10) < 70)) &&
+      !(eq.repuestos || []).some((r) => r.nombre?.toLowerCase().includes('bater'))
+    ) {
       accesoriosList.push({
         equipoIdx: eqIdx,
-        equipoNombre: `${eq.marca} ${eq.modelo || `Eq. ${eqIdx + 1}`}`,
-        nombre: `Batería Li-Ion ${eq.bateriaModelo || 'Alta Capacidad'}`,
+        equipoNombre: `${safeStr(eq.marca)} ${safeStr(eq.modelo || `Eq. ${eqIdx + 1}`)}`,
+        nombre: `Batería Li-Ion ${safeStr(eq.bateriaModelo || 'Alta Capacidad')}`,
         cantidad: 1,
         precio: moneda === 'USD' ? 55 : 380,
         es_opcional: false
@@ -140,7 +224,7 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
   const subtotal2 = accesoriosList.reduce((acc, a) => acc + (a.cantidad * a.precio), 0);
   const totalGeneral = subtotal1 + subtotal2;
 
-  // Helper para crear fila punteada alineada (izq / der)
+  // Helper para crear fila alineada (izq / der) con anchos de celda estandarizados en porcentaje
   const createDottedLine = (leftText, rightText, isBold = false) => {
     return new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
@@ -157,14 +241,18 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
           children: [
             new TableCell({
               width: { size: 75, type: WidthType.PERCENTAGE },
-              children: [new Paragraph({ children: [new TextRun({ text: leftText, bold: isBold, size: 21 })] })]
+              children: [
+                new Paragraph({
+                  children: [new TextRun({ text: safeStr(leftText), bold: isBold, size: 21 })]
+                })
+              ]
             }),
             new TableCell({
               width: { size: 25, type: WidthType.PERCENTAGE },
               children: [
                 new Paragraph({
                   alignment: AlignmentType.RIGHT,
-                  children: [new TextRun({ text: rightText, bold: isBold, size: 21, font: 'Consolas' })]
+                  children: [new TextRun({ text: safeStr(rightText), bold: isBold, size: 21, font: 'Consolas' })]
                 })
               ]
             })
@@ -174,10 +262,10 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
     });
   };
 
-  // Párrafos del documento
+  // Array de párrafos del documento
   const paragraphs = [];
 
-  // Fecha y Destinatario (el membrete visual superior va en el Header de sección)
+  // Fecha y Destinatario
   paragraphs.push(
     new Paragraph({
       children: [
@@ -201,7 +289,7 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
     new Paragraph({
       children: [
         new TextRun({
-          text: `REF.: INFORME TECNICO PRELIMINAR DE ORDEN DE SERVICIO: N° ${numeroOrden}${condiciones.referenciaAdicional ? ' ' + condiciones.referenciaAdicional : ''}`,
+          text: `REF.: INFORME TECNICO PRELIMINAR DE ORDEN DE SERVICIO: N° ${numeroOrden}${condiciones.referenciaAdicional ? ' ' + safeStr(condiciones.referenciaAdicional) : ''}`,
           bold: true,
           underline: {},
           size: 22
@@ -243,22 +331,15 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
     })
   );
 
-  (formData.equipos || []).forEach((eq, idx) => {
-    let accList = [];
-    const accObj = eq.accesoriosRecepcion || {};
-    Object.keys(accObj).forEach((k) => {
-      if (accObj[k] === 'CON') {
-        accList.push(`con ${k.toLowerCase()}`);
-      }
-    });
-    const accStr = accList.length > 0 ? accList.join(', ') : 'con accesorios completos';
-
+  (formData.equipos || []).forEach((eq) => {
+    // Redacción técnica precisa según tipo de dispositivo (Radio Móvil vs Handy vs Repetidora)
+    const lineText = formatEquipmentReceptionText(eq);
     paragraphs.push(
       new Paragraph({
         bullet: { level: 0 },
         children: [
           new TextRun({
-            text: `Handy ${eq.marca || 'Motorola'} ${eq.modelo || 'Radio'} ${eq.banda || 'VHF'} – Serie: ${eq.serie || eq.numero_serie || 'S/N'} - ${accStr}.`,
+            text: safeStr(lineText),
             size: 21
           })
         ]
@@ -282,12 +363,13 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
   );
 
   (formData.equipos || []).forEach((eq, idx) => {
+    const prefix = getDevicePrefix(eq);
     paragraphs.push(
       new Paragraph({
         spacing: { before: 150, after: 80 },
         children: [
           new TextRun({
-            text: `[${idx + 1}]. ${eq.marca || 'Motorola'} ${eq.modelo || 'Radio'} ${eq.banda || 'VHF'} – Serie: ${eq.serie || eq.numero_serie || 'S/N'}, se realizó la revisión general del equipo:`,
+            text: `[${idx + 1}]. ${prefix} ${safeStr(eq.marca || 'Motorola')} ${safeStr(eq.modelo || 'Radio')} ${safeStr(eq.banda || 'VHF')} – Serie: ${safeStr(eq.serie || eq.numero_serie || 'S/N')}, se realizó la revisión general del equipo:`,
             bold: true,
             size: 21
           })
@@ -309,6 +391,22 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
         })
       );
     } else {
+      // Dictamen técnico redactado en diagnóstico o presupuesto
+      if (eq.texto_diagnostico) {
+        paragraphs.push(
+          new Paragraph({
+            bullet: { level: 0 },
+            children: [
+              new TextRun({
+                text: `- ${safeStr(eq.texto_diagnostico)}`,
+                bold: true,
+                size: 20
+              })
+            ]
+          })
+        );
+      }
+
       // Viñetas consolidadas de fallas de placa
       if (eq.fallas && eq.fallas.length > 0) {
         if (eq.fallas.length === 1) {
@@ -317,14 +415,14 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
               bullet: { level: 0 },
               children: [
                 new TextRun({
-                  text: `- El equipo presenta falla en ${eq.fallas[0].label?.toLowerCase() || 'componente de placa'}, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.`,
+                  text: `- El equipo presenta falla en ${safeStr(eq.fallas[0].label?.toLowerCase() || 'componente de placa')}, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.`,
                   size: 20
                 })
               ]
             })
           );
         } else {
-          const listaFallas = eq.fallas.map(f => f.label?.toLowerCase() || 'componente de placa').join(', ');
+          const listaFallas = eq.fallas.map((f) => safeStr(f.label?.toLowerCase() || 'componente de placa')).join(', ');
           paragraphs.push(
             new Paragraph({
               bullet: { level: 0 },
@@ -337,7 +435,7 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
             })
           );
         }
-      } else {
+      } else if (!eq.texto_diagnostico) {
         paragraphs.push(
           new Paragraph({
             bullet: { level: 0 },
@@ -351,7 +449,7 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
         );
       }
 
-      // Viñeta antena
+      // Viñeta antena (solo si aplica reemplazo)
       if (eq.antenaEstado === 'REEMPLAZO') {
         paragraphs.push(
           new Paragraph({
@@ -366,14 +464,14 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
         );
       }
 
-      // Viñeta batería
+      // Viñeta batería (solo si aplica reemplazo o capacidad degradada)
       if (eq.bateriaEstado === 'REEMPLAZO' || (parseInt(eq.bateriaCarga, 10) > 0 && parseInt(eq.bateriaCarga, 10) < 70)) {
         paragraphs.push(
           new Paragraph({
             bullet: { level: 0 },
             children: [
               new TextRun({
-                text: `- La batería ${eq.bateriaModelo || 'del equipo'}, tiene una capacidad de carga del ${eq.bateriaCarga || 40}% se debe reemplazar, se cotizará en accesorios.`,
+                text: `- La batería ${safeStr(eq.bateriaModelo || 'del equipo')}, tiene una capacidad de carga del ${eq.bateriaCarga || 40}% se debe reemplazar, se cotizará en accesorios.`,
                 size: 20
               })
             ]
@@ -415,7 +513,7 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
       paragraphs.push(
         new Paragraph({
           bullet: { level: 0 },
-          children: [new TextRun({ text: c, size: 20 })]
+          children: [new TextRun({ text: safeStr(c), size: 20 })]
         })
       );
     });
@@ -425,7 +523,7 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
         children: [
           new TextRun({
             text: 'Confirmarnos si se procede con el servicio técnico indicado.',
-            italic: true,
+            italics: true,
             size: 20
           })
         ],
@@ -451,7 +549,7 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
       new Paragraph({
         children: [
           new TextRun({
-            text: condiciones.notasObservaciones.trim(),
+            text: safeStr(condiciones.notasObservaciones.trim()),
             size: 20
           })
         ],
@@ -485,21 +583,22 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
   );
 
   // Bloque 1: Servicio Técnico por equipo
-  (formData.equipos || []).forEach((eq, idx) => {
+  (formData.equipos || []).forEach((eq) => {
     const costo = parseFloat(eq.costo_servicio) || 0;
-    const desc = eq.descripcion_servicio || '(Servicio técnico, revisión general, limpieza, ajuste-calibración de parámetros y mantenimiento general)';
+    const desc = getDescripcionEfectiva(eq);
+    const prefix = getDevicePrefix(eq);
 
     paragraphs.push(
       createDottedLine(
-        `${eq.marca || 'Radio'} ${eq.modelo || ''} – Serie: ${eq.serie || eq.numero_serie || 'S/N'}`,
+        `${prefix} ${safeStr(eq.marca || 'Radio')} ${safeStr(eq.modelo)} – Serie: ${safeStr(eq.serie || eq.numero_serie || 'S/N')}`,
         formatCurrency(costo, moneda),
         true
       ),
       new Paragraph({
         children: [
           new TextRun({
-            text: desc,
-            italic: true,
+            text: safeStr(desc),
+            italics: true,
             size: 19
           })
         ],
@@ -508,20 +607,43 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
     );
   });
 
-  paragraphs.push(
-    createDottedLine(
-      'Sub total 1 Servicio técnico ...................................................',
-      formatCurrency(subtotal1, moneda),
-      true
-    )
-  );
+  // REGLA DE NEGOCIO: Condición Dinámica de Sumatoria Total
+  if (subtotal2 === 0) {
+    // Si la orden NO tiene accesorios ni repuestos cotizados:
+    // Mostrar ÚNICAMENTE: TOTAL SERVICIO TÉCNICO: [Monto]
+    paragraphs.push(
+      new Paragraph({ spacing: { before: 150 } }),
+      createDottedLine(
+        'TOTAL SERVICIO TÉCNICO -------------------------------------------------------------',
+        formatCurrency(subtotal1, moneda),
+        true
+      ),
+      new Paragraph({
+        spacing: { before: 100 },
+        children: [
+          new TextRun({
+            text: safeStr(getImporteLiteral(subtotal1, moneda)),
+            bold: true,
+            size: 20
+          })
+        ]
+      })
+    );
+  } else {
+    // Si existen repuestos cotizados (> 0), mostrar Subtotal 1, Subtotal 2 y SUMATORIA TOTAL
+    paragraphs.push(
+      createDottedLine(
+        'Sub total 1 Servicio técnico ...................................................',
+        formatCurrency(subtotal1, moneda),
+        true
+      )
+    );
 
-  // Bloque 2: Accesorios (si existen)
-  if (accesoriosList.length > 0) {
+    // Bloque 2: Accesorios y Repuestos Cotizados
     paragraphs.push(
       new Paragraph({
         spacing: { before: 150, after: 50 },
-        children: [new TextRun({ text: 'Accesorios:', bold: true, size: 21 })]
+        children: [new TextRun({ text: 'Accesorios y Repuestos Cotizados:', bold: true, size: 21 })]
       })
     );
 
@@ -530,7 +652,7 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
       const opcText = acc.es_opcional ? ' [Opcional]' : '';
       paragraphs.push(
         createDottedLine(
-          `${acc.nombre} (${acc.cantidad} Unid X ${formatCurrency(acc.precio, moneda)} c/u)${opcText}`,
+          `${safeStr(acc.nombre)} (${acc.cantidad} Unid X ${formatCurrency(acc.precio, moneda)} c/u)${opcText}`,
           formatCurrency(itemSubtotal, moneda),
           false
         )
@@ -539,41 +661,25 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
 
     paragraphs.push(
       createDottedLine(
-        'Sub total 2 Accesorios .........................................................',
+        'Sub total 2 Accesorios y Repuestos Cotizados ...................................',
         formatCurrency(subtotal2, moneda),
         true
       )
     );
-  }
 
-  // Sumatoria Total
-  paragraphs.push(
-    new Paragraph({ spacing: { before: 150 } }),
-    createDottedLine(
-      'SUMATORIA TOTAL: Servicio técnico + Accesorios ----------------------------------------',
-      formatCurrency(totalGeneral, moneda),
-      true
-    ),
-    new Paragraph({
-      spacing: { before: 100 },
-      children: [
-        new TextRun({
-          text: getImporteLiteral(totalGeneral, moneda),
-          bold: true,
-          size: 20
-        })
-      ]
-    })
-  );
-
-  // Nota cambiaria si USD
-  if (moneda === 'USD') {
+    // Sumatoria Total
     paragraphs.push(
+      new Paragraph({ spacing: { before: 150 } }),
+      createDottedLine(
+        'SUMATORIA TOTAL: Servicio técnico + Accesorios ----------------------------------------',
+        formatCurrency(totalGeneral, moneda),
+        true
+      ),
       new Paragraph({
-        spacing: { before: 80 },
+        spacing: { before: 100 },
         children: [
           new TextRun({
-            text: CLAUSULA_CAMBIARIA_USD,
+            text: safeStr(getImporteLiteral(totalGeneral, moneda)),
             bold: true,
             size: 20
           })
@@ -582,7 +688,28 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
     );
   }
 
-  // SECCIÓN 5: TÉRMINOS COMERCIALES Y POLÍTICAS
+  // Nota cambiaria si USD: Texto regular normal, SOLO la palabra 'Nota:' en negrita
+  if (moneda === 'USD') {
+    paragraphs.push(
+      new Paragraph({
+        spacing: { before: 100 },
+        children: [
+          new TextRun({
+            text: 'Nota: ',
+            bold: true,
+            size: 20
+          }),
+          new TextRun({
+            text: '“Precios en USD, pagaderos en Bs al TC oficial del día de pago. Sujetos a reconfirmación si las condiciones cambiarias varían significativamente”.',
+            bold: false,
+            size: 20
+          })
+        ]
+      })
+    );
+  }
+
+  // SECCIÓN 5: TÉRMINOS COMERCIALES Y POLÍTICAS (Tipografía limpia, regular 10pt, negrita solo en viñetas)
   paragraphs.push(
     new Paragraph({
       spacing: { before: 250 },
@@ -595,57 +722,97 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
         })
       ]
     }),
-    new Paragraph({ children: [new TextRun({ text: '• Forma de pago: Al contado.', size: 20 })] }),
-    new Paragraph({ children: [new TextRun({ text: `• Vigencia de informe: ${condiciones.diasVigencia || 5} días para su aprobación a partir de la fecha de entrega del presente informe.`, size: 20 })] }),
-    new Paragraph({ children: [new TextRun({ text: '• Accesorios y repuestos: Disponibles en Stock, salvo ventas sin previo aviso.', size: 20 })] }),
-    new Paragraph({ children: [new TextRun({ text: `• Entrega de equipos reparados: ${condiciones.tiempoEntrega || '1 a 2 semanas'}, posterior al día de la autorización por escrito del presente informe.`, size: 20 })] }),
-    new Paragraph({ children: [new TextRun({ text: `• Garantía de la reparación: ${condiciones.textoGarantia || '5 días calendario a partir de la entrega para verificación operativa.'}`, size: 20 })] })
+    new Paragraph({
+      children: [
+        new TextRun({ text: '• Forma de pago: ', bold: true, size: 20 }),
+        new TextRun({ text: 'Al contado.', size: 20 })
+      ]
+    }),
+    new Paragraph({
+      children: [
+        new TextRun({ text: '• Vigencia de informe: ', bold: true, size: 20 }),
+        new TextRun({ text: `${condiciones.diasVigencia || 5} días para su aprobación a partir de la fecha de entrega del presente informe.`, size: 20 })
+      ]
+    }),
+    new Paragraph({
+      children: [
+        new TextRun({ text: '• Accesorios y repuestos: ', bold: true, size: 20 }),
+        new TextRun({ text: 'Disponibles en Stock, salvo ventas sin previo aviso.', size: 20 })
+      ]
+    }),
+    new Paragraph({
+      children: [
+        new TextRun({ text: '• Entrega de equipos reparados: ', bold: true, size: 20 }),
+        new TextRun({ text: `${safeStr(condiciones.tiempoEntrega || '1 a 2 semanas')}, posterior al día de la autorización por escrito del presente informe.`, size: 20 })
+      ]
+    }),
+    new Paragraph({
+      children: [
+        new TextRun({ text: '• Garantía de la reparación: ', bold: true, size: 20 }),
+        new TextRun({ text: `${safeStr(condiciones.textoGarantia || '5 días calendario a partir de la entrega para verificación operativa.')}`, size: 20 })
+      ]
+    })
   );
 
   if (condiciones.incluirGarantiaBaterias) {
     paragraphs.push(
-      new Paragraph({ children: [new TextRun({ text: '• Tiempo de prueba de baterías: Las baterías nuevas cuentan con 3 meses de garantía por defectos de fábrica.', size: 20 })] })
+      new Paragraph({
+        children: [
+          new TextRun({ text: '• Tiempo de prueba de baterías: ', bold: true, size: 20 }),
+          new TextRun({ text: 'Las baterías nuevas cuentan con 3 meses de garantía por defectos de fábrica.', size: 20 })
+        ]
+      })
     );
   }
 
   paragraphs.push(
-    new Paragraph({ children: [new TextRun({ text: '• Cuenta de cheque: Para pagos con cheque, este debe ser girado a nombre de: AMERICA SISTEMAS DE COMUNICACIÓN KEMLO SRL', size: 20 })] }),
     new Paragraph({
       children: [
-        new TextRun({
-          text: `• Penalidad por no autorización: ${getRevisionCostText(condiciones.costoRevision, moneda)}`,
-          size: 20
-        })
+        new TextRun({ text: '• Cuenta de cheque: ', bold: true, size: 20 }),
+        new TextRun({ text: 'Para pagos con cheque, este debe ser girado a nombre de: AMERICA SISTEMAS DE COMUNICACIÓN KEMLO SRL', size: 20 })
       ]
     }),
-    ...(condiciones.incluirPoliticasGenerales !== false ? [
-      new Paragraph({
-        spacing: { before: 150 },
-        children: [
-          new TextRun({
-            text: 'CONDICIONES Y POLITICAS GENERALES DE LA EMPRESA:\n' +
+    new Paragraph({
+      children: [
+        new TextRun({ text: '• Penalidad por no autorización: ', bold: true, size: 20 }),
+        new TextRun({ text: safeStr(getRevisionCostText(condiciones.costoRevision, moneda)), size: 20 })
+      ]
+    }),
+    ...(condiciones.incluirPoliticasGenerales !== false
+      ? [
+          new Paragraph({
+            spacing: { before: 150 },
+            children: [
+              new TextRun({
+                text: 'CONDICIONES Y POLÍTICAS GENERALES DE LA EMPRESA:\n',
+                bold: true,
+                size: 20
+              }),
+              new TextRun({
+                text:
                   'SERVICIOS - Toda cotización de servicios, como ser instalaciones, servicio técnico, revisiones, reparaciones, mantenimientos, etc., son solo una estimación del precio por servicio y no el precio final, el cual variará de acuerdo a la particularidad de cada servicio.\n' +
                   'Se debe tomar en cuenta que en cada servicio se debe realizar las pruebas operativas, de los equipos y posteriormente se pueden requerir más cambios de repuestos u accesorios, que serán cobrados de forma adicional.\n\n' +
                   'Sin otro particular, me despido.',
-            size: 19
+                size: 19
+              })
+            ]
           })
         ]
-      })
-    ] : [
-      new Paragraph({
-        spacing: { before: 150 },
-        children: [
-          new TextRun({
-            text: 'Sin otro particular, me despido.',
-            italic: true,
-            size: 20
+      : [
+          new Paragraph({
+            spacing: { before: 150 },
+            children: [
+              new TextRun({
+                text: 'Sin otro particular, me despido atentamente.',
+                italics: true,
+                size: 20
+              })
+            ]
           })
-        ]
-      })
-    ])
+        ])
   );
 
-  // SECCIÓN 6: FIRMAS AL PIE
+  // SECCIÓN 6: FIRMAS AL PIE (Con anchos de celda estandarizados en porcentaje)
   paragraphs.push(
     new Paragraph({ spacing: { before: 400 } }),
     new Table({
@@ -668,7 +835,7 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
                   alignment: AlignmentType.CENTER,
                   children: [
                     new TextRun({ text: '____________________________________\n', bold: true }),
-                    new TextRun({ text: `${currentUser?.nombre_completo || 'Atención al Cliente'}\n`, bold: true, size: 21 }),
+                    new TextRun({ text: `${safeStr(currentUser?.nombre_completo || 'Atención al Cliente')}\n`, bold: true, size: 21 }),
                     new TextRun({ text: 'Asistente de Servicio Técnico\nAMERICA SISTEMAS DE COMUNICACIÓN', size: 18 })
                   ]
                 })
@@ -699,34 +866,42 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
 
   (formData.equipos || []).forEach((eq, eqIdx) => {
     const handyNum = eq.orden_indice || (eqIdx + 1);
-    const handyLabel = `${eq.marca || 'Motorola'} ${eq.modelo || `Handy #${handyNum}`}`.trim();
-    const serie = eq.serie || eq.numero_serie || `Handy #${handyNum}`;
+    const handyLabel = getDeviceFullLabel(eq, handyNum);
+    const serie = safeStr(eq.serie || eq.numero_serie || `S/N #${handyNum}`);
 
     const rawRecepcion = [
       ...(Array.isArray(eq.imagenesRecepcion) ? eq.imagenesRecepcion : []),
       ...(Array.isArray(eq.fotosRecepcion) ? eq.fotosRecepcion : []),
-      ...(Array.isArray(eq.imagenes) ? eq.imagenes.filter(img => {
-        const et = String(img?.etapa || img?.tipo || '').toUpperCase();
-        return et !== 'DIAGNOSTICO' && et !== 'INTERNA' && et !== 'INTERNO';
-      }) : []),
-      ...(Array.isArray(eq.evidencias) ? eq.evidencias.filter(img => {
-        const et = String(img?.etapa || img?.tipo || '').toUpperCase();
-        return et !== 'DIAGNOSTICO' && et !== 'INTERNA' && et !== 'INTERNO';
-      }) : [])
+      ...(Array.isArray(eq.imagenes)
+        ? eq.imagenes.filter((img) => {
+            const et = String(img?.etapa || img?.tipo || '').toUpperCase();
+            return et !== 'DIAGNOSTICO' && et !== 'INTERNA' && et !== 'INTERNO';
+          })
+        : []),
+      ...(Array.isArray(eq.evidencias)
+        ? eq.evidencias.filter((img) => {
+            const et = String(img?.etapa || img?.tipo || '').toUpperCase();
+            return et !== 'DIAGNOSTICO' && et !== 'INTERNA' && et !== 'INTERNO';
+          })
+        : [])
     ];
 
     const rawDiagnostico = [
       ...(Array.isArray(eq.imagenesInternas) ? eq.imagenesInternas : []),
       ...(Array.isArray(eq.imagenesDiagnostico) ? eq.imagenesDiagnostico : []),
       ...(Array.isArray(eq.fotosDiagnostico) ? eq.fotosDiagnostico : []),
-      ...(Array.isArray(eq.imagenes) ? eq.imagenes.filter(img => {
-        const et = String(img?.etapa || img?.tipo || '').toUpperCase();
-        return et === 'DIAGNOSTICO' || et === 'INTERNA' || et === 'INTERNO';
-      }) : []),
-      ...(Array.isArray(eq.evidencias) ? eq.evidencias.filter(img => {
-        const et = String(img?.etapa || img?.tipo || '').toUpperCase();
-        return et === 'DIAGNOSTICO' || et === 'INTERNA' || et === 'INTERNO';
-      }) : [])
+      ...(Array.isArray(eq.imagenes)
+        ? eq.imagenes.filter((img) => {
+            const et = String(img?.etapa || img?.tipo || '').toUpperCase();
+            return et === 'DIAGNOSTICO' || et === 'INTERNA' || et === 'INTERNO';
+          })
+        : []),
+      ...(Array.isArray(eq.evidencias)
+        ? eq.evidencias.filter((img) => {
+            const et = String(img?.etapa || img?.tipo || '').toUpperCase();
+            return et === 'DIAGNOSTICO' || et === 'INTERNA' || et === 'INTERNO';
+          })
+        : [])
     ];
 
     const reception = [];
@@ -737,7 +912,7 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
       reception.push({
         ...img,
         url,
-        name: img?.name || img?.nombre_archivo || `Foto Ingreso #${i + 1}`
+        name: safeStr(img?.name || img?.nombre_archivo || `Foto Ingreso #${i + 1}`)
       });
     });
 
@@ -749,7 +924,7 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
       diagnosis.push({
         ...img,
         url,
-        name: img?.name || img?.nombre_archivo || `Foto Placa / Daño #${i + 1}`
+        name: safeStr(img?.name || img?.nombre_archivo || `Foto Placa / Daño #${i + 1}`)
       });
     });
 
@@ -838,9 +1013,9 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
       } else {
         for (let fi = 0; fi < eqFoto.reception.length; fi++) {
           const foto = eqFoto.reception[fi];
-          let imgBytes = null;
+          let imgRes = null;
           try {
-            imgBytes = await getImageBytes(foto.url);
+            imgRes = await getImageBytes(foto.url);
           } catch (e) {}
 
           const photoChildren = [
@@ -852,18 +1027,21 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
             })
           ];
 
-          if (imgBytes) {
+          if (imgRes && imgRes.data) {
             try {
               photoChildren.push(
                 new ImageRun({
-                  data: imgBytes,
+                  data: imgRes.data,
                   transformation: {
                     width: 250,
                     height: 180
-                  }
+                  },
+                  type: imgRes.type || 'jpg'
                 })
               );
-            } catch (err) {}
+            } catch (err) {
+              console.warn('[docxExport] Error adjuntando foto recepción:', err.message);
+            }
           }
 
           paragraphs.push(
@@ -907,9 +1085,9 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
       } else {
         for (let fi = 0; fi < eqFoto.diagnosis.length; fi++) {
           const foto = eqFoto.diagnosis[fi];
-          let imgBytes = null;
+          let imgRes = null;
           try {
-            imgBytes = await getImageBytes(foto.url);
+            imgRes = await getImageBytes(foto.url);
           } catch (e) {}
 
           const photoChildren = [
@@ -921,18 +1099,21 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
             })
           ];
 
-          if (imgBytes) {
+          if (imgRes && imgRes.data) {
             try {
               photoChildren.push(
                 new ImageRun({
-                  data: imgBytes,
+                  data: imgRes.data,
                   transformation: {
                     width: 250,
                     height: 180
-                  }
+                  },
+                  type: imgRes.type || 'jpg'
                 })
               );
-            } catch (err) {}
+            } catch (err) {
+              console.warn('[docxExport] Error adjuntando foto diagnóstico:', err.message);
+            }
           }
 
           paragraphs.push(
@@ -946,44 +1127,50 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
     }
   }
 
-  // Configuración de encabezados y pies de página oficiales
-  const headersObj = headerImgBytes ? {
-    default: new Header({
-      children: [
-        new Paragraph({
-          alignment: AlignmentType.CENTER,
+  // Configuración de encabezados y pies de página oficiales con tipo MIME explícito
+  const headersObj = headerImgObj && headerImgObj.data
+    ? {
+        default: new Header({
           children: [
-            new ImageRun({
-              data: headerImgBytes,
-              transformation: {
-                width: 535,
-                height: 65
-              }
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new ImageRun({
+                  data: headerImgObj.data,
+                  transformation: {
+                    width: 535,
+                    height: 65
+                  },
+                  type: headerImgObj.type || 'png'
+                })
+              ]
             })
           ]
         })
-      ]
-    })
-  } : undefined;
+      }
+    : undefined;
 
-  const footersObj = footerImgBytes ? {
-    default: new Footer({
-      children: [
-        new Paragraph({
-          alignment: AlignmentType.CENTER,
+  const footersObj = footerImgObj && footerImgObj.data
+    ? {
+        default: new Footer({
           children: [
-            new ImageRun({
-              data: footerImgBytes,
-              transformation: {
-                width: 535,
-                height: 65
-              }
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new ImageRun({
+                  data: footerImgObj.data,
+                  transformation: {
+                    width: 535,
+                    height: 65
+                  },
+                  type: footerImgObj.type || 'png'
+                })
+              ]
             })
           ]
         })
-      ]
-    })
-  } : undefined;
+      }
+    : undefined;
 
   const doc = new Document({
     creator: 'AMERICA SISTEMAS DE COMUNICACIÓN KEMLO SRL',
@@ -1008,8 +1195,8 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
               height: 16838 // A4 Alto en twips
             },
             margin: {
-              top: headerImgBytes ? 1300 : 1440,
-              bottom: footerImgBytes ? 1200 : 1440,
+              top: headerImgObj ? 1300 : 1440,
+              bottom: footerImgObj ? 1200 : 1440,
               left: 1000,
               right: 1000,
               header: 450,

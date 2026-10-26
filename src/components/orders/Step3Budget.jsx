@@ -4,7 +4,7 @@ import React, { useMemo, useEffect } from 'react';
 import {
   DollarSign, Wrench, ShieldCheck, AlertCircle, Plus, Trash2,
   FileText, Clock, Calendar, CheckSquare, Sparkles, ShieldAlert,
-  Info, Check, ChevronRight, Lock
+  Info, Check, ChevronRight, Lock, Radio
 } from 'lucide-react';
 import EquipmentTabs from '@/components/orders/EquipmentTabs';
 import RepuestoCombobox from '@/components/common/RepuestoCombobox';
@@ -15,6 +15,11 @@ import {
   DEFAULT_REVISION_COST,
   normalizeCurrency
 } from '@/lib/utils/currencyFormat';
+import {
+  generarDescripcionServicio,
+  getDescripcionEfectiva,
+  DEFAULT_GENERIC_SERVICE_DESCRIPTION
+} from '@/lib/utils/deviceType';
 
 const GARANTIA_OPTIONS = [
   {
@@ -102,38 +107,51 @@ export default function Step3Budget({
 
   const equipo = formData.equipos[activeEquipoIndex] || {};
 
-  // Auto-generación de descripción de servicio basada en fallas y repuestos de Fase 2
-  const generarDescripcionTrabajo = (eq) => {
-    if (eq.no_autorizo_revision) {
-      return '(El cliente no autorizo la reparación, solo se cobra el servicio de revisión y diagnostico)';
-    }
-
-    const componentes = [];
-    if (eq.fallas && eq.fallas.length > 0) {
-      eq.fallas.forEach(f => {
-        if (f.label) componentes.push(f.label.toLowerCase());
-      });
-    }
-    if (eq.repuestos && eq.repuestos.length > 0) {
-      eq.repuestos.filter(r => r.se_reemplaza).forEach(r => {
-        if (r.nombre) componentes.push(r.nombre.toLowerCase());
-      });
-    }
-
-    const compTexto = componentes.length > 0 
-      ? `cambio de ${Array.from(new Set(componentes)).slice(0, 3).join(', ')}, ` 
-      : '';
-
-    return `(Servicio técnico, ${compTexto}revisión general, limpieza, ajuste-calibración de parámetros y mantenimiento general)`;
+  // Aplicar el precio de mano de obra del radio activo a todos los radios del lote
+  const handleAplicarPrecioATodos = () => {
+    if (isTecnico) return;
+    const currentCost = parseFloat(equipo.costo_servicio) || 0;
+    const updatedEquipos = formData.equipos.map((eqItem) => {
+      if (eqItem.reparacion_rechazada && !eqItem.no_autorizo_revision) return eqItem;
+      return {
+        ...eqItem,
+        costo_servicio: currentCost
+      };
+    });
+    updateForm({ equipos: updatedEquipos });
   };
 
-  // Efecto para precargar descripción si está vacía
+  // Auto-hidratar descripción de servicio para cada equipo del lote si no fue editada manualmente
   useEffect(() => {
-    if (equipo && !equipo.descripcion_servicio && formData.equipos.length > 0) {
-      const desc = generarDescripcionTrabajo(equipo);
-      updateEquipo(activeEquipoIndex, { descripcion_servicio: desc });
+    if (!formData.equipos || formData.equipos.length === 0) return;
+
+    let modified = false;
+    const updatedEquipos = formData.equipos.map((eq) => {
+      // Si fue editada manualmente por el usuario, respetarla
+      if (eq.descripcion_servicio_manual && eq.descripcion_servicio) {
+        return eq;
+      }
+
+      const generated = generarDescripcionServicio(eq);
+      const currentDesc = String(eq.descripcion_servicio || '').trim();
+      const isGeneric = !currentDesc || 
+        currentDesc === DEFAULT_GENERIC_SERVICE_DESCRIPTION ||
+        (currentDesc.startsWith('(Servicio técnico, revisión general') && currentDesc.endsWith('mantenimiento general)'));
+
+      if (!currentDesc || (isGeneric && generated !== currentDesc)) {
+        modified = true;
+        return {
+          ...eq,
+          descripcion_servicio: generated
+        };
+      }
+      return eq;
+    });
+
+    if (modified) {
+      updateForm({ equipos: updatedEquipos });
     }
-  }, [activeEquipoIndex, equipo?.no_autorizo_revision]);
+  }, [formData.equipos?.length]);
 
   // Manejo de toggle "no autorizó reparación"
   const handleToggleNoAutorizo = (checked) => {
@@ -144,7 +162,8 @@ export default function Step3Budget({
       costo_servicio: checked ? revCost : (equipo.costo_servicio || 150),
       descripcion_servicio: checked 
         ? '(El cliente no autorizo la reparación, solo se cobra el servicio de revisión y diagnostico)'
-        : generarDescripcionTrabajo({ ...equipo, no_autorizo_revision: false })
+        : generarDescripcionServicio({ ...equipo, no_autorizo_revision: false }),
+      descripcion_servicio_manual: false
     });
   };
 
@@ -384,11 +403,65 @@ export default function Step3Budget({
                     Sub total 1: Servicio Técnico y Mano de Obra
                   </h3>
                   <p className="text-xs text-gray-400">
-                    Radio seleccionado: {equipo.marca} {equipo.modelo} — Serie: {equipo.serie || equipo.numero_serie || 'S/N'}
+                    Radio seleccionado: <strong className="text-gray-700">{equipo.marca} {equipo.modelo}</strong> — Serie: <strong className="font-mono text-gray-700">{equipo.serie || equipo.numero_serie || 'S/N'}</strong>
                   </p>
                 </div>
               </div>
             </div>
+
+            {/* Selector interactivo de radios de la flota */}
+            {formData.equipos.length > 1 && (
+              <div className="space-y-1.5 p-3.5 bg-slate-50 border border-slate-200/90 rounded-2xl">
+                <div className="flex items-center justify-between pb-1">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-gray-700 flex items-center gap-1.5">
+                    <Radio size={13} className="text-[#E30613]" />
+                    <span>Lote de Radios ({formData.equipos.length} equipos):</span>
+                  </span>
+                  <span className="text-[10px] text-gray-400 italic">Seleccione el radio a configurar</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                  {formData.equipos.map((eqItem, idx) => {
+                    const isSelected = idx === activeEquipoIndex;
+                    const cost = parseFloat(eqItem.costo_servicio) || 0;
+                    const serieStr = eqItem.serie || eqItem.numero_serie || 'S/N';
+                    return (
+                      <button
+                        key={eqItem.id || idx}
+                        type="button"
+                        onClick={() => setActiveEquipoIndex(idx)}
+                        className={`p-3 rounded-xl text-left border transition-all cursor-pointer flex items-center justify-between gap-2.5 ${
+                          isSelected
+                            ? 'bg-red-50/90 border-[#E30613] text-gray-900 shadow-sm ring-2 ring-red-500/20'
+                            : 'bg-white border-slate-200 text-gray-600 hover:bg-slate-100/80 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${
+                              isSelected ? 'bg-[#E30613] text-white' : 'bg-slate-200 text-gray-700'
+                            }`}>
+                              Radio #{idx + 1}
+                            </span>
+                            <span className="font-bold text-xs text-gray-900 truncate">
+                              {eqItem.marca} {eqItem.modelo || 'S/M'}
+                            </span>
+                          </div>
+                          <span className="font-mono text-[11px] text-gray-500 block truncate mt-1">
+                            Serie: {serieStr}
+                          </span>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <span className="text-[10px] text-gray-400 block font-bold">Mano de Obra:</span>
+                          <span className={`font-mono font-black text-sm ${isSelected ? 'text-[#E30613]' : 'text-gray-900'}`}>
+                            {formatCurrency(cost, moneda)}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Checkbox: Cliente No Autorizó la Reparación */}
             <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-start gap-3">
@@ -412,7 +485,7 @@ export default function Step3Budget({
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs font-bold uppercase tracking-wider text-gray-700">
-                  Mano de Obra / Servicio Técnico ({moneda === 'USD' ? 'Usd.' : 'Bs.'})
+                  Mano de Obra / Servicio Técnico para Radio #{activeEquipoIndex + 1} ({moneda === 'USD' ? 'Usd.' : 'Bs.'})
                 </label>
                 {equipo.no_autorizo_revision && (
                   <span className="text-[11px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full">
@@ -435,32 +508,105 @@ export default function Step3Budget({
                   className="w-full pl-16 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xl font-black text-gray-900 focus:outline-none focus:bg-white focus:border-[#E30613] disabled:bg-slate-100 disabled:text-gray-500"
                 />
               </div>
+
+              {/* Botón de Ayuda para aplicar precio a todos los radios del lote */}
+              {formData.equipos.length > 1 && !isTecnico && (
+                <div className="mt-2 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={handleAplicarPrecioATodos}
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100/80 px-3 py-1.5 rounded-xl border border-red-200/80 transition-all cursor-pointer shadow-2xs active:scale-95"
+                    title="Copiar este costo de mano de obra a todos los equipos del lote"
+                  >
+                    <Sparkles size={13} className="text-[#E30613]" />
+                    <span>Aplicar este precio ({formatCurrency(parseFloat(equipo.costo_servicio) || 0, moneda)}) a todos los radios del lote</span>
+                  </button>
+                  <span className="text-[11px] text-gray-400 font-medium">
+                    {formData.equipos.length} radios en total
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Descripción Técnica del Trabajo a realizar */}
             <div>
-              <label className="text-xs font-bold uppercase tracking-wider text-gray-700 block mb-1.5">
-                Descripción del Trabajo Técnico Realizado / Por Realizar
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-gray-700 block">
+                  Descripción del Trabajo Técnico Realizado / Por Realizar (Radio #{activeEquipoIndex + 1})
+                </label>
+                {equipo.descripcion_servicio_manual ? (
+                  <span className="text-[10px] text-amber-700 font-bold bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                    ✏️ Editado manualmente
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                    <Check size={11} /> Autogenerado según Fase 2
+                  </span>
+                )}
+              </div>
               <textarea
                 rows={3}
                 disabled={isTecnico}
-                value={equipo.descripcion_servicio || ''}
-                onChange={(e) => updateEquipo(activeEquipoIndex, { descripcion_servicio: e.target.value })}
-                placeholder="(Servicio técnico, revisión general, limpieza, ajuste-calibración de parámetros y mantenimiento general)"
-                className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium text-gray-800 focus:outline-none focus:bg-white focus:border-[#E30613] disabled:bg-slate-100 leading-relaxed"
+                value={getDescripcionEfectiva(equipo)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  updateEquipo(activeEquipoIndex, { 
+                    descripcion_servicio: val,
+                    descripcion_servicio_manual: true
+                  });
+                }}
+                placeholder="Ej: (Servicio técnico, reparación/reemplazo de componentes, revisión general...)"
+                className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium text-gray-800 focus:outline-none focus:bg-white focus:border-[#E30613] disabled:bg-slate-100 leading-relaxed font-mono"
               />
-              <p className="text-[11px] text-gray-400 mt-1 italic">
-                Este texto aparecerá textualmente entre paréntesis debajo del equipo en la cotización oficial.
-              </p>
+              <div className="flex items-center justify-between mt-1">
+                <p className="text-[11px] text-gray-400 italic">
+                  Este texto se incluirá en el Informe A4 y Word (.docx) debajo de este equipo específico.
+                </p>
+                {equipo.descripcion_servicio_manual && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateEquipo(activeEquipoIndex, {
+                        descripcion_servicio: generarDescripcionServicio(equipo),
+                        descripcion_servicio_manual: false
+                      });
+                    }}
+                    className="text-[11px] text-red-600 hover:text-red-700 font-bold underline cursor-pointer"
+                  >
+                    Restaurar texto automático
+                  </button>
+                )}
+              </div>
             </div>
 
-            {/* Total parcial Subtotal 1 */}
-            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs sm:text-sm font-bold">
-              <span className="text-gray-500">Sub total 1 Servicio Técnico (Todos los radios):</span>
-              <span className="font-mono text-gray-900 text-base font-black">
-                {formatCurrency(subtotal1, moneda)}
-              </span>
+            {/* Total parcial Subtotal 1 y resumen de lote */}
+            <div className="pt-3 border-t border-slate-100 space-y-2.5">
+              {formData.equipos.length > 1 && (
+                <div className="space-y-1.5 pb-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">
+                    Resumen Mano de Obra de la Flota:
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs">
+                    {formData.equipos.map((eqItem, idx) => (
+                      <div key={eqItem.id || idx} className="flex justify-between items-center bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200/70">
+                        <span className="text-gray-700 font-medium truncate">
+                          Radio #{idx + 1}: {eqItem.marca} {eqItem.modelo || 'S/M'}
+                        </span>
+                        <span className="font-mono font-bold text-gray-900 ml-2 shrink-0">
+                          {formatCurrency(parseFloat(eqItem.costo_servicio) || 0, moneda)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between text-xs sm:text-sm font-bold pt-1 border-t border-dotted border-slate-200">
+                <span className="text-gray-600">Sub total 1 Servicio Técnico (Todos los radios):</span>
+                <span className="font-mono text-gray-900 text-base font-black">
+                  {formatCurrency(subtotal1, moneda)}
+                </span>
+              </div>
             </div>
           </div>
 
