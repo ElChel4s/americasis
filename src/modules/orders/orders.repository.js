@@ -563,6 +563,52 @@ export const OrdersRepository = {
         }
       }
 
+      // Sincronizar estado de batería en equipo_accesorios_recepcion
+      if (diagnosisData.bateria_porcentaje_carga !== undefined || diagnosisData.bateriaCarga !== undefined || diagnosisData.bateria_modelo || diagnosisData.bateria_serie) {
+        const batPct = diagnosisData.bateria_porcentaje_carga !== undefined 
+          ? diagnosisData.bateria_porcentaje_carga 
+          : (diagnosisData.bateriaCarga !== undefined ? diagnosisData.bateriaCarga : null);
+        const batMod = diagnosisData.bateria_modelo || diagnosisData.bateriaModelo || null;
+        const batSer = diagnosisData.bateria_serie || diagnosisData.bateriaSerie || null;
+        const batPres = diagnosisData.bateria_presencia || diagnosisData.bateriaPresencia || 'CON';
+
+        try {
+          const { rows: batRows } = await client.query(`
+            SELECT id FROM equipo_accesorios_recepcion 
+            WHERE equipo_id = $1 AND accesorio_nombre ILIKE '%bater%' 
+            LIMIT 1
+          `, [equipoId]);
+
+          if (batRows.length > 0) {
+            await client.query(`
+              UPDATE equipo_accesorios_recepcion
+              SET presencia = $1, bateria_porcentaje_carga = $2, bateria_modelo = $3, bateria_serie = $4
+              WHERE id = $5
+            `, [
+              batPres,
+              batPct !== null && batPct !== '' ? parseInt(batPct, 10) : null,
+              batMod,
+              batSer,
+              batRows[0].id
+            ]);
+          } else if (batPres === 'CON' || batPct !== null) {
+            await client.query(`
+              INSERT INTO equipo_accesorios_recepcion 
+              (equipo_id, accesorio_nombre, presencia, bateria_porcentaje_carga, bateria_modelo, bateria_serie)
+              VALUES ($1, 'Batería', $2, $3, $4, $5)
+            `, [
+              equipoId,
+              batPres,
+              batPct !== null && batPct !== '' ? parseInt(batPct, 10) : null,
+              batMod,
+              batSer
+            ]);
+          }
+        } catch (batErr) {
+          console.warn('[OrdersRepository] Error sincronizando accesorio batería en PG:', batErr.message);
+        }
+      }
+
       const { rows: subtotal1Rows } = await client.query(`
         SELECT COALESCE(SUM(costo_servicio), 0) AS subtotal_servicio
         FROM orden_equipos
@@ -687,6 +733,50 @@ export const OrdersRepository = {
         orden_visual: idx + 1
       }));
       await supabase.from('equipo_repuestos_cotizados').insert(repRows);
+    }
+
+    // 3.0 Sincronizar estado de batería en equipo_accesorios_recepcion
+    if (diagnosisData.bateria_porcentaje_carga !== undefined || diagnosisData.bateriaCarga !== undefined || diagnosisData.bateria_modelo || diagnosisData.bateria_serie) {
+      const batPct = diagnosisData.bateria_porcentaje_carga !== undefined 
+        ? diagnosisData.bateria_porcentaje_carga 
+        : (diagnosisData.bateriaCarga !== undefined ? diagnosisData.bateriaCarga : null);
+      const batMod = diagnosisData.bateria_modelo || diagnosisData.bateriaModelo || null;
+      const batSer = diagnosisData.bateria_serie || diagnosisData.bateriaSerie || null;
+      const batPres = diagnosisData.bateria_presencia || diagnosisData.bateriaPresencia || 'CON';
+
+      try {
+        const { data: existingBat } = await supabase
+          .from('equipo_accesorios_recepcion')
+          .select('id')
+          .eq('equipo_id', resolvedEquipoId)
+          .ilike('accesorio_nombre', '%bater%')
+          .maybeSingle();
+
+        if (existingBat?.id) {
+          await supabase
+            .from('equipo_accesorios_recepcion')
+            .update({
+              presencia: batPres,
+              bateria_porcentaje_carga: batPct !== null && batPct !== '' ? parseInt(batPct, 10) : null,
+              bateria_modelo: batMod,
+              bateria_serie: batSer
+            })
+            .eq('id', existingBat.id);
+        } else if (batPres === 'CON' || batPct !== null) {
+          await supabase
+            .from('equipo_accesorios_recepcion')
+            .insert({
+              equipo_id: resolvedEquipoId,
+              accesorio_nombre: 'Batería',
+              presencia: batPres,
+              bateria_porcentaje_carga: batPct !== null && batPct !== '' ? parseInt(batPct, 10) : null,
+              bateria_modelo: batMod,
+              bateria_serie: batSer
+            });
+        }
+      } catch (batErr) {
+        console.warn('[OrdersRepository] Error sincronizando accesorio batería en Supabase:', batErr.message);
+      }
     }
 
     // 3.1 Sincronizar fotos de diagnóstico en public.equipo_evidencias
@@ -837,16 +927,36 @@ export const OrdersRepository = {
               etapa: ev.etapa
             }));
 
+            const accs = eq.equipo_accesorios_recepcion || [];
+            const reps = eq.equipo_repuestos_cotizados || [];
+            const batAcc = accs.find(a => (a.accesorio_nombre || '').toLowerCase().includes('bater')) || {};
+            const batRep = reps.find(r => (r.nombre || '').toLowerCase().includes('bater')) || {};
+
+            const batPct = eq.bateria_porcentaje_carga ?? batAcc.bateria_porcentaje_carga ?? batRep.porcentaje_carga ?? null;
+            const batMod = eq.bateria_modelo || batAcc.bateria_modelo || '';
+            const batSer = eq.bateria_serie || batAcc.bateria_serie || '';
+            const batReemplazo = batRep.se_reemplaza || (batPct !== null && batPct <= 40);
+
             return {
               ...eq,
-              accesorios: eq.equipo_accesorios_recepcion || [],
+              accesorios: accs,
               fallas: eq.equipo_fallas || [],
-              repuestos: eq.equipo_repuestos_cotizados || [],
+              repuestos: reps,
               imagenes: recImgs,
               imagenesRecepcion: recImgs,
               imagenesInternas: diagImgs,
               imagenesDiagnostico: diagImgs,
-              evidencias: allImgs
+              evidencias: allImgs,
+              bateria_porcentaje_carga: batPct,
+              bateriaCarga: batPct,
+              bateria_modelo: batMod,
+              bateriaModelo: batMod,
+              bateria_serie: batSer,
+              bateriaSerie: batSer,
+              bateria_estado: batReemplazo ? 'REEMPLAZO' : 'OPERATIVA',
+              bateriaEstado: batReemplazo ? 'REEMPLAZO' : 'OPERATIVA',
+              bateria_presencia: batAcc.presencia || 'CON',
+              bateriaPresencia: batAcc.presencia || 'CON'
             };
           });
 
@@ -890,6 +1000,25 @@ export const OrdersRepository = {
 
         const { rows: repRows } = await query(`SELECT * FROM equipo_repuestos_cotizados WHERE equipo_id = $1 ORDER BY orden_visual ASC, id ASC`, [eq.id]);
         eq.repuestos = repRows;
+
+        const batAcc = (accRows || []).find(a => (a.accesorio_nombre || '').toLowerCase().includes('bater')) || {};
+        const batRep = (repRows || []).find(r => (r.nombre || '').toLowerCase().includes('bater')) || {};
+
+        const batPct = eq.bateria_porcentaje_carga ?? batAcc.bateria_porcentaje_carga ?? batRep.porcentaje_carga ?? null;
+        const batMod = eq.bateria_modelo || batAcc.bateria_modelo || '';
+        const batSer = eq.bateria_serie || batAcc.bateria_serie || '';
+        const batReemplazo = batRep.se_reemplaza || (batPct !== null && batPct <= 40);
+
+        eq.bateria_porcentaje_carga = batPct;
+        eq.bateriaCarga = batPct;
+        eq.bateria_modelo = batMod;
+        eq.bateriaModelo = batMod;
+        eq.bateria_serie = batSer;
+        eq.bateriaSerie = batSer;
+        eq.bateria_estado = batReemplazo ? 'REEMPLAZO' : 'OPERATIVA';
+        eq.bateriaEstado = batReemplazo ? 'REEMPLAZO' : 'OPERATIVA';
+        eq.bateria_presencia = batAcc.presencia || 'CON';
+        eq.bateriaPresencia = batAcc.presencia || 'CON';
 
         try {
           const { rows: evRows } = await query(`SELECT * FROM equipo_evidencias WHERE equipo_id = $1 ORDER BY fecha_subida ASC, id ASC`, [eq.id]);

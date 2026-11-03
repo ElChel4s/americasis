@@ -110,7 +110,7 @@ graph TD
   - Al hacer clic en cualquier foto, abre el **Lightbox Modal** en alta resolución con zoom interactivo (`1x`, `1.5x`, `2x`), botón de descarga y cierre con tecla `Esc`.
   - Permiso exclusivo de visualización (sin botón de eliminación).
   - Si no hay fotos, muestra: *"Sin fotos de ingreso registradas en mostrador"*.
-- **Evaluación de Accesorios y Batería:**
+- **Evaluación de Accesorios y Batería:**z
   - Botones de condición: `Operativa`, `Dañado/Roto`, `Se sugiere reemplazo`.
   - Medidor de batería con selector rápido (`100%`, `80%`, `50%`, `20%`, `0%` o porcentaje manual) con alertas visuales por color.
 - **Chequeo de Fallas de Placa Electrónica:**
@@ -181,6 +181,26 @@ Para evitar reintroducir bugs ya solucionados en el pasado, ten en cuenta las si
    - En `Step3Budget.jsx`, las pestañas aíslan `costo_servicio` y `descripcion_servicio` por cada radio. Si el usuario modifica el texto manualmente, se activa `descripcion_servicio_manual = true` respetando su edición y permitiendo restaurar el texto dinámico.
    - En `Step4ReportPreview.jsx` y `docxExport.js`, la sección 4 (Costo del Servicio) utiliza `getDescripcionEfectiva(eq)` garantizando que en el Informe A4 y Word (.docx) se detallen con precisión las intervenciones de cada radio (ej. Memoria EEPROM en Radio 1 y Cooler en Radio 2).
    - En `orders.service.js` y `orders.repository.js`, se persisten y sincronizan `descripcion_servicio` y `texto_diagnostico` sin sobreescribir ni mezclar la redacción comercial con el dictamen de laboratorio.
+
+7. **Acceso Universal y Permisos Defensivos en Mesa de Diagnóstico (`/tecnico/diagnostico/[ordenId]`):**
+   - **Causa raíz:** Referencias huérfanas en JSX (`myPendingRequest`) provocaban un `ReferenceError` que bloqueaba la pantalla o rebotaba a los usuarios (tanto administradores como técnicos).
+   - **Solución implementada:**
+     - Bypass total para `ADMINISTRADOR` y `RECEPCION` con permisos de edición y consulta.
+     - Para el rol `TECNICO`, acceso sin bloqueos a órdenes asignadas o en estado libre con botón directo `[ Tomar Orden y Diagnosticar ]`.
+     - `currentUser` sincronizado de inmediato desde `localStorage` para prevenir rebotes visuales antes del fetch `/api/auth/me`.
+     - Envoltorio de seguridad `DiagnosticErrorBoundary` y fallback con reintento sin purgar la base de datos local ante micro-cortes de red.
+
+8. **Módulo de Evaluación de Banco de Batería en Laboratorio (Analizador de Carga):**
+   - **Causa raíz:** En la versión inicial el porcentaje de batería se solicitaba en Recepción con un slider simple, mientras que en taller el técnico no tenía cómo ingresar las mediciones de su analizador de carga.
+   - **Solución implementada:**
+     - En Recepción (`Step1Reception.jsx`), se removió el slider de porcentaje, registrando únicamente presencia, modelo y lote, con una nota clara de que el análisis de capacidad lo realiza el técnico en laboratorio.
+     - En la Mesa de Diagnóstico (`Step2Diagnosis.jsx`), se implementó el módulo destacado **"Evaluación de Banco de Batería en Laboratorio"**:
+       - Selector de presencia (`CON BATERÍA` / `SIN BATERÍA`).
+       - Inputs para Modelo/N° Parte y Serie/Lote.
+       - Slider analítico (0-100%) + input numérico + presets instantáneos: `[100%] [80%] [60%] [40%] [20%] [0%]`.
+       - Badge dinámico de salud de celda: Rojo (<= 40%, Crítico/Reemplazo), Ámbar (41-70%, Desgaste regular), Verde (71-100%, Óptima).
+       - Switch `[ Recomendar Reemplazo de Batería en Cotización ]` con auto-sugerencia si <= 40%, enlazado en tiempo real con `repuestos` cotizados y con la viñeta técnica oficial en el dictamen.
+     - Persistencia bidireccional en Supabase (`equipo_accesorios_recepcion` y `equipo_repuestos_cotizados`), PostgreSQL directo, `localStorage`, Fase 3 (Presupuesto), Fase 4 (Informe A4) y exportación Word (.docx).
 
 ---
 

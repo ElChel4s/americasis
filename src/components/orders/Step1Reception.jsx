@@ -715,17 +715,14 @@ export default function Step1Reception({
                             })}
                           />
                         </div>
-                        <div>
-                          <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Capacidad de Carga ({accesoriosObj[`${item}_carga`] || 50}%)</label>
-                          <input
-                            type="range"
-                            min="0" max="100" step="5"
-                            className="w-full accent-[#E30613]"
-                            value={accesoriosObj[`${item}_carga`] || 50}
-                            onChange={(e) => updateEquipo(activeEquipoIndex, { 
-                              accesoriosRecepcion: { ...accesoriosObj, [`${item}_carga`]: e.target.value } 
-                            })}
-                          />
+                        <div className="p-2.5 rounded-xl bg-amber-50/90 border border-amber-200/70 flex items-start gap-2 text-xs text-amber-800">
+                          <span className="text-sm shrink-0">⚡</span>
+                          <div>
+                            <span className="font-bold block">Medición de Capacidad en Laboratorio:</span>
+                            <span className="text-[11px] text-amber-700 leading-tight block">
+                              El porcentaje de carga y estado de celda será analizado e ingresado por el técnico en la mesa de diagnóstico con el analizador de carga.
+                            </span>
+                          </div>
                         </div>
                       </div>
                     )}

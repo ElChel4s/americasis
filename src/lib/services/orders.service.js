@@ -281,7 +281,17 @@ const mergeOrderPreservingPhotos = (serverOrder, localOrder) => {
       imagenes: finalImgs,
       imagenesRecepcion: finalImgs,
       imagenesInternas: finalImgsInt,
-      imagenesDiagnostico: finalImgsInt
+      imagenesDiagnostico: finalImgsInt,
+      bateria_porcentaje_carga: sEq.bateria_porcentaje_carga ?? sEq.bateriaCarga ?? lEq.bateria_porcentaje_carga ?? lEq.bateriaCarga ?? null,
+      bateriaCarga: sEq.bateriaCarga ?? sEq.bateria_porcentaje_carga ?? lEq.bateriaCarga ?? lEq.bateria_porcentaje_carga ?? null,
+      bateria_modelo: sEq.bateria_modelo || sEq.bateriaModelo || lEq.bateria_modelo || lEq.bateriaModelo || '',
+      bateriaModelo: sEq.bateriaModelo || sEq.bateria_modelo || lEq.bateriaModelo || lEq.bateria_modelo || '',
+      bateria_serie: sEq.bateria_serie || sEq.bateriaSerie || lEq.bateria_serie || lEq.bateriaSerie || '',
+      bateriaSerie: sEq.bateriaSerie || sEq.bateria_serie || lEq.bateriaSerie || lEq.bateria_serie || '',
+      bateria_estado: sEq.bateria_estado || sEq.bateriaEstado || lEq.bateria_estado || lEq.bateriaEstado || null,
+      bateriaEstado: sEq.bateriaEstado || sEq.bateria_estado || lEq.bateriaEstado || lEq.bateria_estado || null,
+      bateria_presencia: sEq.bateria_presencia || sEq.bateriaPresencia || lEq.bateria_presencia || lEq.bateriaPresencia || 'CON',
+      bateriaPresencia: sEq.bateriaPresencia || sEq.bateria_presencia || lEq.bateriaPresencia || lEq.bateria_presencia || 'CON'
     };
   });
 
@@ -891,7 +901,17 @@ export const OrdersService = {
             imagenesRecepcion: eq.imagenesRecepcion || eq.imagenes || [],
             imagenesDiagnostico: eq.imagenesDiagnostico || eq.imagenesInternas || [],
             imagenesInternas: eq.imagenesInternas || eq.imagenesDiagnostico || [],
-            evidencias: eq.evidencias || []
+            evidencias: eq.evidencias || [],
+            bateria_porcentaje_carga: eq.bateria_porcentaje_carga !== undefined && eq.bateria_porcentaje_carga !== null ? eq.bateria_porcentaje_carga : (eq.bateriaCarga !== undefined && eq.bateriaCarga !== null ? eq.bateriaCarga : null),
+            bateriaCarga: eq.bateriaCarga !== undefined && eq.bateriaCarga !== null ? eq.bateriaCarga : (eq.bateria_porcentaje_carga !== undefined && eq.bateria_porcentaje_carga !== null ? eq.bateria_porcentaje_carga : null),
+            bateria_modelo: eq.bateria_modelo || eq.bateriaModelo || null,
+            bateriaModelo: eq.bateriaModelo || eq.bateria_modelo || null,
+            bateria_serie: eq.bateria_serie || eq.bateriaSerie || null,
+            bateriaSerie: eq.bateriaSerie || eq.bateria_serie || null,
+            bateria_estado: eq.bateria_estado || eq.bateriaEstado || null,
+            bateriaEstado: eq.bateriaEstado || eq.bateria_estado || null,
+            bateria_presencia: eq.bateria_presencia || eq.bateriaPresencia || 'CON',
+            bateriaPresencia: eq.bateriaPresencia || eq.bateria_presencia || 'CON'
           }
         };
 
@@ -951,7 +971,17 @@ export const OrdersService = {
           imagenes: imgs,
           imagenesRecepcion: imgs,
           imagenesInternas: imgsInt,
-          imagenesDiagnostico: imgsInt
+          imagenesDiagnostico: imgsInt,
+          bateria_porcentaje_carga: eq.bateria_porcentaje_carga ?? eq.bateriaCarga ?? prev.bateria_porcentaje_carga ?? prev.bateriaCarga ?? null,
+          bateriaCarga: eq.bateriaCarga ?? eq.bateria_porcentaje_carga ?? prev.bateriaCarga ?? prev.bateria_porcentaje_carga ?? null,
+          bateria_modelo: eq.bateria_modelo || eq.bateriaModelo || prev.bateria_modelo || prev.bateriaModelo || '',
+          bateriaModelo: eq.bateriaModelo || eq.bateria_modelo || prev.bateriaModelo || prev.bateria_modelo || '',
+          bateria_serie: eq.bateria_serie || eq.bateriaSerie || prev.bateria_serie || prev.bateriaSerie || '',
+          bateriaSerie: eq.bateriaSerie || eq.bateria_serie || prev.bateriaSerie || prev.bateria_serie || '',
+          bateria_estado: eq.bateria_estado || eq.bateriaEstado || prev.bateria_estado || prev.bateriaEstado || null,
+          bateriaEstado: eq.bateriaEstado || eq.bateria_estado || prev.bateriaEstado || prev.bateria_estado || null,
+          bateria_presencia: eq.bateria_presencia || eq.bateriaPresencia || prev.bateria_presencia || prev.bateriaPresencia || 'CON',
+          bateriaPresencia: eq.bateriaPresencia || eq.bateria_presencia || prev.bateriaPresencia || prev.bateria_presencia || 'CON'
         };
       });
 

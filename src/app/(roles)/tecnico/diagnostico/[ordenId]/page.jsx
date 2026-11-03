@@ -1,69 +1,152 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft, Wrench, Send, Save, CheckCircle2,
   AlertCircle, Loader2, Radio, Camera, ShieldCheck,
-  Check, Clock, Lock, ShieldAlert, UserCheck
+  Check, Clock, Lock, ShieldAlert, UserCheck, RefreshCw
 } from 'lucide-react';
 import { OrdersService } from '@/lib/services/orders.service';
 import Step2Diagnosis from '@/components/orders/Step2Diagnosis';
 import EquipmentTabs from '@/components/orders/EquipmentTabs';
 import OrderPhaseNav from '@/components/orders/OrderPhaseNav';
 
+// Error Boundary de respaldo para aislar cualquier fallo inesperado en mesa técnica
+class DiagnosticErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, errorInfo) {
+    console.error("Error en Mesa Técnica:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="bg-red-50 border-2 border-red-300 rounded-3xl p-6 sm:p-8 text-center space-y-4 my-8 max-w-xl mx-auto shadow-sm">
+          <AlertCircle size={36} className="text-red-600 mx-auto" />
+          <h3 className="text-base sm:text-lg font-black text-red-900">
+            Aviso de Renderizado en Mesa de Diagnóstico
+          </h3>
+          <p className="text-xs text-red-700">
+            Ocurrió una excepción al procesar los datos de este equipo. No se ha perdido información.
+          </p>
+          <div className="p-3 bg-white rounded-xl border border-red-200 text-left font-mono text-[11px] text-red-800 overflow-x-auto max-h-32">
+            {this.state.error?.message || String(this.state.error)}
+          </div>
+          <button
+            type="button"
+            onClick={() => this.setState({ hasError: false, error: null })}
+            className="px-5 py-2.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-sm"
+          >
+            Reintentar Visualización
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function TecnicoDiagnosticoMesaPage() {
   const params = useParams();
   const router = useRouter();
-  const ordenId = params.ordenId || params.id;
+  const ordenId = params?.ordenId || params?.id;
 
   const [order, setOrder] = useState(null);
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('america_user');
+        if (cached) return JSON.parse(cached);
+      } catch (e) {}
+      const role = localStorage.getItem('america_user_role');
+      if (role) return { rol: role };
+    }
+    return null;
+  });
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [activeEquipoIdx, setActiveEquipoIdx] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [isRequestingPermission, setIsRequestingPermission] = useState(false);
   const [feedback, setFeedback] = useState(null);
 
+  const loadOrder = useCallback(async () => {
+    if (!ordenId || ordenId === 'undefined' || ordenId === 'null') {
+      setLoadError('Identificador de orden inválido.');
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setLoadError(null);
+
+    try {
+      const data = await OrdersService.getOrderById(ordenId);
+      if (data) {
+        setOrder(data);
+      } else {
+        // Fallback defensivo en localStorage si el API no respondió inmediatamente
+        const localOrders = typeof OrdersService.getStoredLocalOrders === 'function' 
+          ? OrdersService.getStoredLocalOrders() 
+          : [];
+        const found = localOrders.find(o => 
+          String(o.id) === String(ordenId) || String(o.numero_orden) === String(ordenId)
+        );
+        if (found) {
+          setOrder(typeof OrdersService.rehydrateOrder === 'function' ? OrdersService.rehydrateOrder(found) : found);
+        } else {
+          setLoadError(`No se encontró el expediente #${ordenId} o la base de datos está sincronizando.`);
+        }
+      }
+    } catch (err) {
+      console.error('Error cargando orden en mesa técnica:', err);
+      // Fallback local ante fallos de red
+      try {
+        const localOrders = typeof OrdersService.getStoredLocalOrders === 'function' 
+          ? OrdersService.getStoredLocalOrders() 
+          : [];
+        const found = localOrders.find(o => 
+          String(o.id) === String(ordenId) || String(o.numero_orden) === String(ordenId)
+        );
+        if (found) {
+          setOrder(typeof OrdersService.rehydrateOrder === 'function' ? OrdersService.rehydrateOrder(found) : found);
+        } else {
+          setLoadError(`Error al consultar el expediente: ${err.message || 'Error de conexión'}`);
+        }
+      } catch (e) {
+        setLoadError(`Error al consultar el expediente: ${err.message || 'Error de conexión'}`);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [ordenId]);
+
   useEffect(() => {
     let isMounted = true;
-    OrdersService.getOrderById(ordenId)
-      .then(data => {
-        if (!isMounted) return;
-        if (data) {
-          setOrder(data);
-          setLoading(false);
-        } else {
-          OrdersService.removeOrderFromLocalCache(ordenId);
-          setLoading(false);
-          alert("La orden solicitada ya no existe o fue eliminada.");
-          const role = typeof window !== 'undefined' ? (localStorage.getItem('america_user_role') || '') : '';
-          const redirectPath = role === 'ADMINISTRADOR' ? '/admin/inicio' : (role === 'RECEPCION' ? '/recepcion/inicio' : '/tecnico/inicio');
-          router.replace(redirectPath);
-        }
-      })
-      .catch(err => {
-        console.error('Error cargando orden en mesa técnica:', err);
-        if (!isMounted) return;
-        OrdersService.removeOrderFromLocalCache(ordenId);
-        setLoading(false);
-        alert("La orden solicitada ya no existe o fue eliminada.");
-        const role = typeof window !== 'undefined' ? (localStorage.getItem('america_user_role') || '') : '';
-        const redirectPath = role === 'ADMINISTRADOR' ? '/admin/inicio' : (role === 'RECEPCION' ? '/recepcion/inicio' : '/tecnico/inicio');
-        router.replace(redirectPath);
-      });
+
+    loadOrder();
 
     fetch('/api/auth/me')
       .then(r => r.json())
       .then(j => {
-        if (isMounted && j.success) {
+        if (isMounted && j.success && j.data) {
           setCurrentUser(j.data);
+          try {
+            localStorage.setItem('america_user', JSON.stringify(j.data));
+            if (j.data.rol) localStorage.setItem('america_user_role', j.data.rol);
+          } catch (e) {}
         }
       })
       .catch(() => {});
 
     return () => { isMounted = false; };
-  }, [ordenId, router]);
+  }, [loadOrder]);
 
   const showFeedbackMsg = (text, type = 'success') => {
     setFeedback({ text, type });
@@ -71,40 +154,33 @@ export default function TecnicoDiagnosticoMesaPage() {
   };
 
   // Cálculo de permisos de edición:
-  // - Administrador tiene acceso total de edición.
-  // - Recepción tiene acceso total de visualización y edición del diagnóstico del técnico.
-  // - El técnico asignado a la orden tiene permiso de edición.
-  // - Los demás técnicos no asignados tienen acceso en modo solo consulta (pueden solicitar autorización).
-  const isAdmin = currentUser?.rol === 'ADMINISTRADOR';
-  const isRecepcion = currentUser?.rol === 'RECEPCION';
-  const isTechnician = currentUser?.rol === 'TECNICO';
+  // 1. Administrador: Bypass total para ver y editar cualquier orden.
+  // 2. Recepción: Acceso total para revisar o completar diagnósticos.
+  // 3. Técnico: Acceso total si está asignado o si la orden está libre/en diagnóstico.
+  const storedRole = typeof window !== 'undefined' ? (localStorage.getItem('america_user_role') || currentUser?.rol) : currentUser?.rol;
+  const isAdmin = currentUser?.rol === 'ADMINISTRADOR' || storedRole === 'ADMINISTRADOR';
+  const isRecepcion = currentUser?.rol === 'RECEPCION' || storedRole === 'RECEPCION';
+  const isTechnician = currentUser?.rol === 'TECNICO' || storedRole === 'TECNICO';
 
   const isAssigned = Boolean(
-    order?.usuario_tecnico_id && (
-      String(order.usuario_tecnico_id) === String(currentUser?.id) ||
-      order.usuario_tecnico_id === currentUser?.id
+    order?.usuario_tecnico_id && currentUser?.id && (
+      String(order.usuario_tecnico_id) === String(currentUser.id)
     )
   ) || Boolean(
     order?.tecnico_nombre_manual && currentUser?.nombre_completo &&
     (order.tecnico_nombre_manual.toLowerCase().includes(currentUser.nombre_completo.toLowerCase()) ||
      currentUser.nombre_completo.toLowerCase().includes(order.tecnico_nombre_manual.toLowerCase()))
   ) || Boolean(
-    order?.tecnico_asignado_id && String(order.tecnico_asignado_id) === String(currentUser?.id)
+    order?.tecnico_asignado_id && currentUser?.id && String(order.tecnico_asignado_id) === String(currentUser.id)
   ) || Boolean(
-    order?.solicitud_asignacion && (
-      String(order.solicitud_asignacion.tecnico_id) === String(currentUser?.id) ||
+    order?.solicitud_asignacion && currentUser?.id && (
+      String(order.solicitud_asignacion.tecnico_id) === String(currentUser.id) ||
       (order.solicitud_asignacion.tecnico_nombre && currentUser?.nombre_completo &&
        order.solicitud_asignacion.tecnico_nombre.toLowerCase().includes(currentUser.nombre_completo.toLowerCase()))
     )
-  ) || Boolean(
-    order?.condiciones_comerciales_json?.solicitud_edicion && (
-      String(order.condiciones_comerciales_json.solicitud_edicion.tecnico_id) === String(currentUser?.id) ||
-      (order.condiciones_comerciales_json.solicitud_edicion.tecnico_nombre && currentUser?.nombre_completo &&
-       order.condiciones_comerciales_json.solicitud_edicion.tecnico_nombre.toLowerCase().includes(currentUser.nombre_completo.toLowerCase()))
-    )
   ) || (
-    // En taller de radios, si no hay técnico asignado o está en recibido/pendiente, cualquier técnico puede diagnosticarlo
-    isTechnician && (!order?.usuario_tecnico_id || !order?.tecnico_nombre_manual || order?.estado === 'RECIBIDO' || order?.estado === 'PENDIENTE_DIAGNOSTICO')
+    // Si la orden no tiene técnico asignado o está pendiente, cualquier técnico puede trabajarla
+    isTechnician && (!order?.usuario_tecnico_id && !order?.tecnico_nombre_manual)
   );
 
   const canEdit = isAdmin || isRecepcion || isAssigned;
@@ -131,7 +207,8 @@ export default function TecnicoDiagnosticoMesaPage() {
         showFeedbackMsg('✓ Orden asignada directamente a tu mesa técnica.');
       }
     } catch (err) {
-      showFeedbackMsg('No se pudo asignar la orden.', 'error');
+      console.error('Error al tomar orden:', err);
+      showFeedbackMsg('No se pudo asignar la orden: ' + (err.message || 'Error de conexión'), 'error');
     } finally {
       setIsRequestingPermission(false);
     }
@@ -140,7 +217,8 @@ export default function TecnicoDiagnosticoMesaPage() {
   const updateEquipoDiagnosis = useCallback((data) => {
     setOrder(prev => {
       if (!prev) return prev;
-      const newEquipos = [...(prev.equipos || [])];
+      const currentEquipos = prev.equipos || [];
+      const newEquipos = [...currentEquipos];
       newEquipos[activeEquipoIdx] = {
         ...newEquipos[activeEquipoIdx],
         ...data
@@ -174,7 +252,7 @@ export default function TecnicoDiagnosticoMesaPage() {
       if (updated) setOrder(updated);
       const msg = isRecepcion 
         ? '✓ ¡Diagnóstico guardado con éxito por Recepción!' 
-        : '✓ ¡Diagnóstico completado con éxito! Enviado a mostrador para presupuestar.';
+        : (isAdmin ? '✓ ¡Diagnóstico guardado con éxito por Gerencia!' : '✓ ¡Diagnóstico completado con éxito! Enviado a mostrador para presupuestar.');
       showFeedbackMsg(msg);
       setTimeout(() => {
         router.push(getReturnRoute());
@@ -188,32 +266,62 @@ export default function TecnicoDiagnosticoMesaPage() {
 
   if (loading) {
     return (
-      <div className="py-24 text-center text-gray-400 flex flex-col items-center justify-center gap-2">
-        <Loader2 size={24} className="animate-spin text-[#E30613]" />
-        <span>Cargando mesa de diagnóstico técnico...</span>
+      <div className="py-24 text-center text-gray-500 flex flex-col items-center justify-center gap-3">
+        <Loader2 size={28} className="animate-spin text-[#E30613]" />
+        <span className="text-xs sm:text-sm font-semibold">Cargando mesa de diagnóstico técnico...</span>
+        <span className="text-[11px] text-gray-400">Verificando permisos y cargando banco de pruebas</span>
       </div>
     );
   }
 
-  if (!order) {
+  if (loadError || !order) {
     return (
-      <div className="bg-white rounded-3xl p-8 border border-slate-200 text-center max-w-lg mx-auto space-y-4 my-12">
-        <AlertCircle size={36} className="text-red-600 mx-auto" />
-        <h2 className="text-lg font-bold text-gray-900">Orden No Encontrada</h2>
-        <p className="text-xs text-gray-500">
-          No se encontró el expediente solicitado en la mesa técnica.
+      <div className="bg-white rounded-3xl p-8 border border-slate-200 text-center max-w-lg mx-auto space-y-4 my-12 shadow-sm">
+        <AlertCircle size={40} className="text-amber-500 mx-auto" />
+        <h2 className="text-lg font-bold text-gray-900">Expediente no disponible</h2>
+        <p className="text-xs text-gray-600 leading-relaxed">
+          {loadError || 'No se pudo cargar la orden en este momento. La conexión puede ser inestable o el registro está siendo procesado.'}
         </p>
-        <button
-          onClick={() => router.push(getReturnRoute())}
-          className="px-5 py-2.5 bg-navy text-white text-xs font-bold rounded-xl cursor-pointer"
-        >
-          {getReturnLabel()}
-        </button>
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <button
+            type="button"
+            onClick={loadOrder}
+            className="flex items-center gap-2 px-5 py-2.5 bg-[#E30613] hover:bg-red-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer"
+          >
+            <RefreshCw size={14} />
+            <span>Reintentar Carga</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => router.push(getReturnRoute())}
+            className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-gray-800 text-xs font-bold rounded-xl transition-all cursor-pointer"
+          >
+            {getReturnLabel()}
+          </button>
+        </div>
       </div>
     );
   }
 
-  const currentEquipo = order.equipos?.[activeEquipoIdx] || order.equipos?.[0] || {};
+  // Normalización defensiva de equipos
+  const sanitizedEquipos = (order.equipos || []).map((eq, i) => ({
+    ...eq,
+    accesorios: eq.accesorios || eq.equipo_accesorios_recepcion || [],
+    fallas: eq.fallas || eq.equipo_fallas || [],
+    repuestos: eq.repuestos || eq.equipo_repuestos_cotizados || [],
+    imagenes: eq.imagenes || eq.imagenesRecepcion || [],
+    imagenesRecepcion: eq.imagenesRecepcion || eq.imagenes || [],
+    imagenesInternas: eq.imagenesInternas || eq.imagenesDiagnostico || [],
+    imagenesDiagnostico: eq.imagenesDiagnostico || eq.imagenesInternas || [],
+    evidencias: eq.evidencias || [],
+    bateria_porcentaje_carga: eq.bateria_porcentaje_carga ?? eq.bateriaCarga ?? null,
+    bateriaCarga: eq.bateriaCarga ?? eq.bateria_porcentaje_carga ?? null,
+    bateriaModelo: eq.bateriaModelo || eq.bateria_modelo || '',
+    bateriaSerie: eq.bateriaSerie || eq.bateria_serie || '',
+    accesoriosRecepcion: eq.accesoriosRecepcion || {}
+  }));
+
+  const currentEquipo = sanitizedEquipos[activeEquipoIdx] || sanitizedEquipos[0] || {};
   const accesoriosRecepcion = (currentEquipo.accesoriosRecepcion && Object.keys(currentEquipo.accesoriosRecepcion).length > 0)
     ? currentEquipo.accesoriosRecepcion
     : (Array.isArray(currentEquipo.accesorios)
@@ -258,38 +366,31 @@ export default function TecnicoDiagnosticoMesaPage() {
               </div>
               <p className="text-xs text-amber-800 mt-0.5">
                 {order.tecnico_nombre_manual
-                  ? `Esta orden está asignada al técnico "${order.tecnico_nombre_manual}". Puedes revisar todos los datos, pero para editar necesitas autorización.`
-                  : `Esta orden aún no ha sido asignada a ningún técnico. Puedes consultar los datos o solicitar que Recepción te la asigne.`}
+                  ? `Esta orden se encuentra registrada bajo el técnico "${order.tecnico_nombre_manual}". Puedes revisar todos los datos técnicos o asignártela para editar.`
+                  : `Esta orden no tiene técnico asignado. Puedes asignártela directamente para comenzar el diagnóstico.`}
               </p>
             </div>
           </div>
 
           <div className="shrink-0 w-full sm:w-auto">
-            {myPendingRequest ? (
-              <div className="flex items-center gap-2 bg-amber-100/90 text-amber-900 px-4 py-2.5 rounded-xl border border-amber-300 text-xs font-bold shadow-xs">
-                <Clock size={16} className="text-amber-700 animate-pulse" />
-                <span>Solicitud enviada a Recepción (Pendiente)</span>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={handleSolicitarPermiso}
-                disabled={isRequestingPermission}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 bg-navy hover:bg-slate-800 active:scale-95 text-white text-xs font-black rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50"
-              >
-                {isRequestingPermission ? (
-                  <>
-                    <Loader2 size={15} className="animate-spin" />
-                    <span>Enviando solicitud...</span>
-                  </>
-                ) : (
-                  <>
-                    <ShieldAlert size={15} />
-                    <span>Solicitar Permiso para Diagnosticar</span>
-                  </>
-                )}
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={handleTomarOrdenDirecto}
+              disabled={isRequestingPermission}
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50"
+            >
+              {isRequestingPermission ? (
+                <>
+                  <Loader2 size={15} className="animate-spin" />
+                  <span>Asignando orden...</span>
+                </>
+              ) : (
+                <>
+                  <Wrench size={15} />
+                  <span>Tomar Orden y Diagnosticar</span>
+                </>
+              )}
+            </button>
           </div>
         </div>
       )}
@@ -345,7 +446,7 @@ export default function TecnicoDiagnosticoMesaPage() {
 
       {/* Pestañas por handy del lote */}
       <EquipmentTabs
-        equipos={order.equipos || []}
+        equipos={sanitizedEquipos}
         activeIndex={activeEquipoIdx}
         onSelect={setActiveEquipoIdx}
         showAdd={false}
@@ -439,15 +540,17 @@ export default function TecnicoDiagnosticoMesaPage() {
       {/* ============================================================== */}
       {/* SECCIÓN ABAJO: HERRAMIENTAS DE LABORATORIO (STEP2DIAGNOSIS) */}
       {/* ============================================================== */}
-      <Step2Diagnosis
-        key={currentEquipo?.id || activeEquipoIdx}
-        equipo={currentEquipo}
-        moneda={order.moneda || 'BOB'}
-        hidePrices={true}
-        onChange={updateEquipoDiagnosis}
-        isLoading={isSaving}
-        readOnly={!canEdit}
-      />
+      <DiagnosticErrorBoundary>
+        <Step2Diagnosis
+          key={currentEquipo?.id || activeEquipoIdx}
+          equipo={currentEquipo}
+          moneda={order.moneda || 'BOB'}
+          hidePrices={true}
+          onChange={updateEquipoDiagnosis}
+          isLoading={isSaving}
+          readOnly={!canEdit}
+        />
+      </DiagnosticErrorBoundary>
 
       {/* ============================================================== */}
       {/* BOTONES DE SALIDA FIJOS EXIGIDOS */}

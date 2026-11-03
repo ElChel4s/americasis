@@ -179,6 +179,48 @@ export default function Step2Diagnosis({
   const [reparacionRechazada, setReparacionRechazada] = useState(Boolean(equipo.reparacion_rechazada));
   const [motivoRechazo, setMotivoRechazo] = useState(equipo.motivo_rechazo || '');
 
+  // --- Módulo Dedicado: Evaluación de Batería en Laboratorio ---
+  const accsRecepcion = equipo.accesoriosRecepcion || {};
+  const batAccRecepcion = (Array.isArray(equipo.accesorios) ? equipo.accesorios.find(a => (a.accesorio_nombre || '').toLowerCase().includes('bater')) : null);
+  
+  const initialPresencia = equipo.bateriaPresencia || equipo.bateria_presencia || (
+    accsRecepcion['Batería'] || accsRecepcion['Bateria'] || accsRecepcion['bateria'] ||
+    (batAccRecepcion ? (batAccRecepcion.presencia || 'CON') : 'CON')
+  );
+
+  const initialModelo = equipo.bateriaModelo || equipo.bateria_modelo || 
+    accsRecepcion['Batería_modelo'] || accsRecepcion['bateria_modelo'] ||
+    batAccRecepcion?.bateria_modelo || '';
+
+  const initialSerie = equipo.bateriaSerie || equipo.bateria_serie || 
+    accsRecepcion['Batería_lote'] || accsRecepcion['bateria_lote'] ||
+    batAccRecepcion?.bateria_serie || '';
+
+  const batRepuesto = (equipo.repuestos || []).find(r => (r.nombre || '').toLowerCase().includes('bater'));
+  const rawPorcentaje = batRepuesto?.porcentaje_carga !== undefined && batRepuesto?.porcentaje_carga !== null
+    ? batRepuesto.porcentaje_carga
+    : (equipo.bateriaCarga !== undefined && equipo.bateriaCarga !== null
+        ? equipo.bateriaCarga
+        : (equipo.bateria_porcentaje_carga !== undefined && equipo.bateria_porcentaje_carga !== null
+            ? equipo.bateria_porcentaje_carga
+            : (batAccRecepcion?.bateria_porcentaje_carga !== undefined && batAccRecepcion?.bateria_porcentaje_carga !== null
+                ? batAccRecepcion.bateria_porcentaje_carga
+                : (accsRecepcion['Batería_carga'] !== undefined ? accsRecepcion['Batería_carga'] : 80))));
+
+  const initialPorcentaje = parseInt(rawPorcentaje, 10) >= 0 ? parseInt(rawPorcentaje, 10) : 80;
+
+  const initialReemplazo = Boolean(
+    batRepuesto
+      ? batRepuesto.se_reemplaza
+      : (equipo.bateriaEstado === 'REEMPLAZO' || initialPorcentaje <= 40)
+  );
+
+  const [bateriaPresencia, setBateriaPresencia] = useState(initialPresencia);
+  const [bateriaModelo, setBateriaModelo] = useState(initialModelo);
+  const [bateriaSerie, setBateriaSerie] = useState(initialSerie);
+  const [bateriaPorcentaje, setBateriaPorcentaje] = useState(initialPorcentaje);
+  const [bateriaRecomendarReemplazo, setBateriaRecomendarReemplazo] = useState(initialReemplazo);
+
   // 2. Accesorios Pre-Cargados y Evaluación Técnica
   const [repuestos, setRepuestos] = useState(() => inicializarEvaluacionAccesorios(equipo));
 
@@ -411,6 +453,65 @@ export default function Step2Diagnosis({
     setTextoDiagnostico((prev) => prev ? `${prev.trim()}. ${texto}` : texto);
   };
 
+  // Actualizador centralizado del Módulo de Batería con sincronización de repuestos y texto
+  const handleActualizarBateria = (nuevosValores = {}) => {
+    const nextPresencia = nuevosValores.presencia !== undefined ? nuevosValores.presencia : bateriaPresencia;
+    const nextModelo = nuevosValores.modelo !== undefined ? nuevosValores.modelo : bateriaModelo;
+    const nextSerie = nuevosValores.serie !== undefined ? nuevosValores.serie : bateriaSerie;
+    let nextPct = nuevosValores.porcentaje !== undefined ? nuevosValores.porcentaje : bateriaPorcentaje;
+    if (nextPct !== null && nextPct !== undefined && nextPct !== '') {
+      nextPct = Math.max(0, Math.min(100, parseInt(nextPct, 10) || 0));
+    } else if (nextPct === '') {
+      nextPct = 0;
+    }
+
+    let nextReemplazo = nuevosValores.recomendarReemplazo !== undefined
+      ? Boolean(nuevosValores.recomendarReemplazo)
+      : (nuevosValores.porcentaje !== undefined && nextPct <= 40 ? true : bateriaRecomendarReemplazo);
+
+    if (nextPresencia === 'SIN') {
+      nextReemplazo = false;
+    }
+
+    if (nuevosValores.presencia !== undefined) setBateriaPresencia(nextPresencia);
+    if (nuevosValores.modelo !== undefined) setBateriaModelo(nextModelo);
+    if (nuevosValores.serie !== undefined) setBateriaSerie(nextSerie);
+    if (nuevosValores.porcentaje !== undefined) setBateriaPorcentaje(nextPct);
+    if (nuevosValores.recomendarReemplazo !== undefined || (nuevosValores.porcentaje !== undefined && nextPct <= 40)) {
+      setBateriaRecomendarReemplazo(nextReemplazo);
+    }
+
+    setRepuestos(prev => {
+      const updated = [...prev];
+      let batIndex = updated.findIndex(r => (r.nombre || '').toLowerCase().includes('bater'));
+      
+      const batData = {
+        id: batIndex >= 0 ? updated[batIndex].id : 'acc-std-1',
+        nombre: 'Batería',
+        estado_condicion: nextPresencia === 'SIN' ? null : (nextReemplazo ? 'Se sugiere reemplazo' : 'Operativa'),
+        se_reemplaza: nextPresencia === 'CON' && nextReemplazo,
+        porcentaje_carga: nextPresencia === 'CON' ? nextPct : null,
+        falla_detalle: nextReemplazo ? `Capacidad remanente del ${nextPct}% (requiere cambio)` : '',
+        repuesto_sugerido: nextModelo ? `Batería ${nextModelo}` : 'Batería Original',
+        cantidad: 1,
+        precio: (batIndex >= 0 && updated[batIndex]?.precio) ? updated[batIndex].precio : 280,
+        es_manual: false,
+        recibido_mostrador: nextPresencia === 'CON'
+      };
+
+      if (batIndex >= 0) {
+        updated[batIndex] = { ...updated[batIndex], ...batData };
+      } else {
+        updated.splice(1, 0, batData);
+      }
+
+      const nuevoTexto = sintetizarTextoTecnico(fallasSeleccionadas, updated, nextPct);
+      setTextoDiagnostico(nuevoTexto);
+
+      return updated;
+    });
+  };
+
   // Generador automático de texto técnico basado en fallas y repuestos (Fase 2 / Fase 4)
   const sintetizarTextoTecnico = (fallas, repuestosList) => {
     const lineas = [];
@@ -432,7 +533,7 @@ export default function Step2Diagnosis({
         if (nombreLow.includes('anten')) {
           lineas.push('- La antena presenta desgaste por uso, pero está funcionando con normalidad, se recomienda su reemplazo, se cotizará en forma opcional.');
         } else if (nombreLow.includes('bater')) {
-          const cap = r.porcentaje_carga !== null && r.porcentaje_carga !== undefined ? r.porcentaje_carga : (parseInt(equipo.bateriaCarga, 10) || 45);
+          const cap = r.porcentaje_carga !== null && r.porcentaje_carga !== undefined ? r.porcentaje_carga : (bateriaPorcentaje ?? (parseInt(equipo.bateriaCarga, 10) || 45));
           lineas.push(`- La batería tiene una capacidad de carga del ${cap}% se debe reemplazar, se cotizará en accesorios.`);
         } else {
           lineas.push(`- Se sugiere reemplazo de ${r.nombre} (${r.falla_detalle || r.estado_condicion || 'Desgaste operativo'}).`);
@@ -594,12 +695,23 @@ export default function Step2Diagnosis({
     repuestos: repuestos,
     imagenesInternas: imagenesInternas,
     imagenesDiagnostico: imagenesInternas,
+    
+    bateria_porcentaje_carga: bateriaPresencia === 'CON' ? bateriaPorcentaje : null,
+    bateriaCarga: bateriaPresencia === 'CON' ? bateriaPorcentaje : null,
+    bateria_modelo: bateriaModelo || null,
+    bateriaModelo: bateriaModelo || null,
+    bateria_serie: bateriaSerie || null,
+    bateriaSerie: bateriaSerie || null,
+    bateria_estado: bateriaPresencia === 'CON' ? (bateriaRecomendarReemplazo ? 'REEMPLAZO' : 'OPERATIVA') : 'SIN_BATERIA',
+    bateriaEstado: bateriaPresencia === 'CON' ? (bateriaRecomendarReemplazo ? 'REEMPLAZO' : 'OPERATIVA') : 'SIN_BATERIA',
+    bateriaPresencia: bateriaPresencia,
+    bateria_presencia: bateriaPresencia,
     subtotales: {
       subtotal1_servicio,
       subtotal2_accesorios,
       total: totalEquipo
     }
-  }), [reparacionRechazada, motivoRechazo, textoDiagnostico, notasAdicionales, equipo.descripcion_servicio, subtotal1_servicio, subtotal2_accesorios, totalEquipo, fallasSeleccionadas, repuestos, imagenesInternas]);
+  }), [reparacionRechazada, motivoRechazo, textoDiagnostico, notasAdicionales, equipo.descripcion_servicio, subtotal1_servicio, subtotal2_accesorios, totalEquipo, fallasSeleccionadas, repuestos, imagenesInternas, bateriaPresencia, bateriaPorcentaje, bateriaModelo, bateriaSerie, bateriaRecomendarReemplazo]);
 
   const lastSyncedRef = useRef('');
   const onChangeRef = useRef(onChange);
@@ -785,7 +897,217 @@ export default function Step2Diagnosis({
         )}
       </div>
 
+            {/* ============================================================== */}
+      {/* 2. EVALUACIÓN DE BANCO DE BATERÍA EN LABORATORIO (ANALIZADOR DE CARGA) */}
       {/* ============================================================== */}
+      <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-5 sm:p-6 space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+          <div className="flex items-center gap-2.5">
+            <span className="p-2.5 bg-amber-500/10 text-amber-600 rounded-2xl border border-amber-500/20">
+              <Zap size={22} className="fill-amber-500 text-amber-500" />
+            </span>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base sm:text-lg font-black text-gray-900">
+                  Evaluación de Banco de Batería en Laboratorio
+                </h3>
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-300">
+                  Analizador de Carga
+                </span>
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Medición analítica de retención de carga, salud de celdas y determinación de reemplazo en cotización.
+              </p>
+            </div>
+          </div>
+
+          {/* Selector de Presencia de Batería */}
+          <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200/80 shrink-0">
+            <button
+              type="button"
+              onClick={() => handleActualizarBateria({ presencia: 'CON' })}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                bateriaPresencia === 'CON'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              ✓ Con Batería
+            </button>
+            <button
+              type="button"
+              onClick={() => handleActualizarBateria({ presencia: 'SIN' })}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                bateriaPresencia === 'SIN'
+                  ? 'bg-slate-800 text-white shadow-xs'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              ✕ Sin Batería
+            </button>
+          </div>
+        </div>
+
+        {bateriaPresencia === 'SIN' ? (
+          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-center space-y-1">
+            <p className="text-xs font-bold text-gray-700">
+              El equipo ingresó al taller técnico sin batería.
+            </p>
+            <p className="text-[11px] text-gray-500">
+              No aplica prueba de analizador de carga ni cotización de reemplazo a menos que el cliente entregue la pieza posteriormente.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-5 animate-slideUp">
+            {/* Fila 1: Datos Técnicos del Módulo (Modelo / N° Parte y Serie / Lote) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-[11px] font-black uppercase text-gray-700 block mb-1.5 tracking-wider">
+                  Modelo / N° de Parte de la Batería:
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej. PMNN4409AR / NNTN8023..."
+                  value={bateriaModelo}
+                  onChange={(e) => handleActualizarBateria({ modelo: e.target.value })}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-[#E30613] text-xs sm:text-sm font-semibold text-gray-900 outline-none transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-black uppercase text-gray-700 block mb-1.5 tracking-wider">
+                  Código de Lote o N° de Serie:
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej. Lote 1745 / S/N..."
+                  value={bateriaSerie}
+                  onChange={(e) => handleActualizarBateria({ serie: e.target.value })}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-[#E30613] text-xs sm:text-sm font-semibold text-gray-900 outline-none transition-all"
+                />
+              </div>
+            </div>
+
+            {/* Fila 2: Banco de Medición del Analizador de Carga */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100/60 border border-slate-200 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-black text-gray-800 uppercase tracking-wide">
+                    Capacidad / Retención Medida en Analizador:
+                  </span>
+                </div>
+
+                {/* Badge Dinámico de Diagnóstico de Celda */}
+                <div className={`px-3 py-1 rounded-full text-xs font-black border flex items-center gap-1.5 self-start sm:self-auto ${
+                  bateriaPorcentaje <= 40
+                    ? 'bg-red-50 text-red-700 border-red-300'
+                    : bateriaPorcentaje <= 70
+                    ? 'bg-amber-50 text-amber-700 border-amber-300'
+                    : 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                }`}>
+                  <span className="text-sm">
+                    {bateriaPorcentaje <= 40 ? '🔴' : (bateriaPorcentaje <= 70 ? '🟡' : '🟢')}
+                  </span>
+                  <span>
+                    {bateriaPorcentaje <= 40 
+                      ? 'Celda Crítica / Degradada (<= 40%)' 
+                      : (bateriaPorcentaje <= 70 ? 'Rendimiento Regular / Desgaste Operativo (41%-70%)' : 'Celda Óptima / Buen Rendimiento (71%-100%)')}
+                  </span>
+                </div>
+              </div>
+
+              {/* Controles de Porcentaje: Slider + Input Numérico */}
+              <div className="flex items-center gap-4">
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="5"
+                  value={bateriaPorcentaje}
+                  onChange={(e) => handleActualizarBateria({ porcentaje: e.target.value })}
+                  className={`flex-1 h-3 rounded-lg cursor-pointer appearance-none transition-all ${
+                    bateriaPorcentaje <= 40 
+                      ? 'accent-red-600 bg-red-100' 
+                      : bateriaPorcentaje <= 70 
+                      ? 'accent-amber-500 bg-amber-100' 
+                      : 'accent-emerald-600 bg-emerald-100'
+                  }`}
+                />
+
+                <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-xl px-3 py-1.5 shadow-2xs shrink-0">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={bateriaPorcentaje}
+                    onChange={(e) => handleActualizarBateria({ porcentaje: e.target.value })}
+                    className="w-14 text-center font-mono font-black text-base text-gray-900 outline-none"
+                  />
+                  <span className="font-bold text-gray-500 text-sm">%</span>
+                </div>
+              </div>
+
+              {/* Botones Rápidos de Presets */}
+              <div className="flex items-center gap-2 flex-wrap pt-1">
+                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mr-1">
+                  Valores Rápidos:
+                </span>
+                {[100, 80, 60, 40, 20, 0].map((pct) => (
+                  <button
+                    key={pct}
+                    type="button"
+                    onClick={() => handleActualizarBateria({ porcentaje: pct })}
+                    className={`px-3 py-1 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                      bateriaPorcentaje === pct
+                        ? (pct <= 40 ? 'bg-red-600 text-white border-red-600 shadow-xs' : (pct <= 70 ? 'bg-amber-600 text-white border-amber-600 shadow-xs' : 'bg-emerald-600 text-white border-emerald-600 shadow-xs'))
+                        : 'bg-white text-gray-700 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    {pct}%
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Fila 3: Recomendación Técnica de Reemplazo */}
+            <div className={`p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+              bateriaRecomendarReemplazo
+                ? 'bg-red-50/70 border-red-200 text-red-900'
+                : 'bg-slate-50 border-slate-200 text-gray-700'
+            }`}>
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="font-black text-xs sm:text-sm">
+                    Recomendar Reemplazo de Batería en Cotización
+                  </span>
+                  {bateriaPorcentaje <= 40 && (
+                    <span className="text-[10px] font-bold bg-red-200 text-red-800 px-2 py-0.5 rounded-md">
+                      Auto-sugerido por baja capacidad
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-gray-500">
+                  {bateriaRecomendarReemplazo
+                    ? 'Se añadirá la batería a la cotización de repuestos y se incluirá la viñeta oficial en el informe técnico.'
+                    : 'La batería se considerará operativa y no se incluirá cotización de reemplazo.'}
+                </p>
+              </div>
+
+              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                <input
+                  type="checkbox"
+                  checked={bateriaRecomendarReemplazo}
+                  onChange={(e) => handleActualizarBateria({ recomendarReemplazo: e.target.checked })}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-600"></div>
+              </label>
+            </div>
+          </div>
+        )}
+      </div>
+
+{/* ============================================================== */}
       {/* 2. ESTADO DE ACCESORIOS Y DIAGNÓSTICO */}
       {/* ============================================================== */}
       <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-5 sm:p-6 space-y-4">
