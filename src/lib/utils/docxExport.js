@@ -25,7 +25,8 @@ import {
   formatEquipmentReceptionText,
   getDevicePrefix,
   getDeviceFullLabel,
-  getDescripcionEfectiva
+  getDescripcionEfectiva,
+  obtenerLineasDiagnosticoEquipo
 } from './deviceType.js';
 
 function resolveImageUrl(img) {
@@ -391,93 +392,23 @@ export async function generateDocxBlob(formData = {}, currentUser = null) {
         })
       );
     } else {
-      // Dictamen técnico redactado en diagnóstico o presupuesto
-      if (eq.texto_diagnostico) {
+      // Prioridad exclusiva: usar únicamente el texto limpio (sin guiones redundantes) para que Word pinte solo el punto de viñeta (•)
+      const lineasDiag = obtenerLineasDiagnosticoEquipo(eq);
+      lineasDiag.forEach((linea) => {
         paragraphs.push(
           new Paragraph({
             bullet: { level: 0 },
+            spacing: { before: 40, after: 40 },
             children: [
               new TextRun({
-                text: `- ${safeStr(eq.texto_diagnostico)}`,
+                text: safeStr(linea),
                 bold: true,
                 size: 20
               })
             ]
           })
         );
-      }
-
-      // Viñetas consolidadas de fallas de placa
-      if (eq.fallas && eq.fallas.length > 0) {
-        if (eq.fallas.length === 1) {
-          paragraphs.push(
-            new Paragraph({
-              bullet: { level: 0 },
-              children: [
-                new TextRun({
-                  text: `- El equipo presenta falla en ${safeStr(eq.fallas[0].label?.toLowerCase() || 'componente de placa')}, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.`,
-                  size: 20
-                })
-              ]
-            })
-          );
-        } else {
-          const listaFallas = eq.fallas.map((f) => safeStr(f.label?.toLowerCase() || 'componente de placa')).join(', ');
-          paragraphs.push(
-            new Paragraph({
-              bullet: { level: 0 },
-              children: [
-                new TextRun({
-                  text: `- El equipo presenta fallas en: ${listaFallas}, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.`,
-                  size: 20
-                })
-              ]
-            })
-          );
-        }
-      } else if (!eq.texto_diagnostico) {
-        paragraphs.push(
-          new Paragraph({
-            bullet: { level: 0 },
-            children: [
-              new TextRun({
-                text: '- El equipo presenta desgaste por uso operativo, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.',
-                size: 20
-              })
-            ]
-          })
-        );
-      }
-
-      // Viñeta antena (solo si aplica reemplazo)
-      if (eq.antenaEstado === 'REEMPLAZO') {
-        paragraphs.push(
-          new Paragraph({
-            bullet: { level: 0 },
-            children: [
-              new TextRun({
-                text: '- La antena presenta desgaste por uso, pero está funcionando con normalidad, se recomienda su reemplazo, se cotizará en forma opcional.',
-                size: 20
-              })
-            ]
-          })
-        );
-      }
-
-      // Viñeta batería (solo si aplica reemplazo o capacidad degradada)
-      if (eq.bateriaEstado === 'REEMPLAZO' || (parseInt(eq.bateriaCarga, 10) > 0 && parseInt(eq.bateriaCarga, 10) < 70)) {
-        paragraphs.push(
-          new Paragraph({
-            bullet: { level: 0 },
-            children: [
-              new TextRun({
-                text: `- La batería ${safeStr(eq.bateriaModelo || 'del equipo')}, tiene una capacidad de carga del ${eq.bateriaCarga || 40}% se debe reemplazar, se cotizará en accesorios.`,
-                size: 20
-              })
-            ]
-          })
-        );
-      }
+      });
     }
   });
 

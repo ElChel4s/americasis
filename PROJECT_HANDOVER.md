@@ -202,6 +202,14 @@ Para evitar reintroducir bugs ya solucionados en el pasado, ten en cuenta las si
        - Switch `[ Recomendar Reemplazo de Batería en Cotización ]` con auto-sugerencia si <= 40%, enlazado en tiempo real con `repuestos` cotizados y con la viñeta técnica oficial en el dictamen.
      - Persistencia bidireccional en Supabase (`equipo_accesorios_recepcion` y `equipo_repuestos_cotizados`), PostgreSQL directo, `localStorage`, Fase 3 (Presupuesto), Fase 4 (Informe A4) y exportación Word (.docx).
 
+9. **Prioridad Exclusiva y Limpieza de Viñetas en Sección 2 ("Diagnóstico de radios") del Informe A4 y DOCX:**
+   - **Causa raíz:** Se renderizaban dos viñetas por equipo (el texto editado manualmente `texto_diagnostico` y las fallas autogeneradas de placa en bucle secundario) junto con guiones redundantes (`• - - El equipo...`).
+   - **Solución implementada:**
+     - Se añadieron las utilidades `obtenerLineasDiagnosticoEquipo(equipo)` y `obtenerTextoDiagnosticoEquipo(equipo)` en `src/lib/utils/deviceType.js`.
+     - Si el usuario o técnico editó `texto_diagnostico`, se utiliza **únicamente** su texto, sanitizando y limpiando guiones iniciales (`.replace(/^[-–—•*\s]+/, '')`).
+     - Se eliminó cualquier bucle secundario que vuelva a imprimir fallas debajo del texto manual.
+     - En el visor A4 (`Step4ReportPreview.jsx`) y en la exportación Word (`docxExport.js`), se renderiza una sola viñeta limpia (`•`) por equipo sin guiones repetitivos.
+
 ---
 
 ## 5. Instrucciones de Ejecución y Despliegue

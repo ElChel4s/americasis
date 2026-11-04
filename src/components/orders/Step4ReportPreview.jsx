@@ -16,7 +16,7 @@ import {
 } from '@/lib/utils/currencyFormat';
 import { generateDocxBlob } from '@/lib/utils/docxExport';
 import { UsersService } from '@/lib/services/users.service';
-import { formatEquipmentReceptionText, getDevicePrefix, getDeviceFullLabel, getDescripcionEfectiva } from '@/lib/utils/deviceType';
+import { formatEquipmentReceptionText, getDevicePrefix, getDeviceFullLabel, getDescripcionEfectiva, obtenerLineasDiagnosticoEquipo } from '@/lib/utils/deviceType';
 
 function formatFechaBolivia(date = new Date()) {
   const MESES = [
@@ -640,57 +640,32 @@ export default function Step4ReportPreview({
                 2. Diagnóstico de radios:
               </h3>
 
-              {(formData.equipos || []).map((eq, idx) => (
-                <div key={eq.id || idx} className="space-y-1 text-xs pl-1">
-                  <p className="font-black text-gray-900">
-                    [{idx + 1}]. {getDevicePrefix(eq)} {eq.marca || 'Motorola'} {eq.modelo || 'Radio'} {eq.banda || 'VHF'} – Serie: {eq.serie || eq.numero_serie || 'S/N'}, se realizó la revisión general del equipo:
-                  </p>
+              {(formData.equipos || []).map((eq, idx) => {
+                const lineasDiag = obtenerLineasDiagnosticoEquipo(eq);
 
-                  {eq.reparacion_rechazada ? (
-                    <p className="font-black text-red-700 uppercase bg-red-50 p-2 rounded border border-red-200 text-[11px] leading-relaxed">
-                      NOTA: EQUIPO NO REPARADO NO AUTORIZADO POR EL CLIENTE, REPARACION COTIZADA {formatCurrency(eq.costo_servicio || condiciones.costoRevision, moneda)}, SI SE DESEA REPARAR EL EQUIPO, SE DEBE ACTUALIZAR EL PRECIO.
+                return (
+                  <div key={eq.id || idx} className="space-y-1 text-xs pl-1">
+                    <p className="font-black text-gray-900">
+                      [{idx + 1}]. {getDevicePrefix(eq)} {eq.marca || 'Motorola'} {eq.modelo || 'Radio'} {eq.banda || 'VHF'} – Serie: {eq.serie || eq.numero_serie || 'S/N'}, se realizó la revisión general del equipo:
                     </p>
-                  ) : (
-                    <div className="space-y-0.5 pl-3">
-                      {/* Dictamen técnico redactado por el técnico / ajustado en presupuesto */}
-                      {eq.texto_diagnostico && (
-                        <p className="text-gray-900 font-semibold leading-relaxed">
-                          - {eq.texto_diagnostico}
-                        </p>
-                      )}
 
-                      {/* Viñetas de placa */}
-                      {eq.fallas && eq.fallas.length > 0 ? (
-                        eq.fallas.map((f, fi) => (
-                          <p key={fi} className="text-gray-800">
-                            - El equipo presenta falla en <strong className="font-bold">{f.label?.toLowerCase() || 'componente de placa'}</strong>, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.
+                    {eq.reparacion_rechazada ? (
+                      <p className="font-black text-red-700 uppercase bg-red-50 p-2 rounded border border-red-200 text-[11px] leading-relaxed">
+                        NOTA: EQUIPO NO REPARADO NO AUTORIZADO POR EL CLIENTE, REPARACION COTIZADA {formatCurrency(eq.costo_servicio || condiciones.costoRevision, moneda)}, SI SE DESEA REPARAR EL EQUIPO, SE DEBE ACTUALIZAR EL PRECIO.
+                      </p>
+                    ) : (
+                      <div className="space-y-1 pl-3">
+                        {lineasDiag.map((linea, li) => (
+                          <p key={li} className="text-gray-900 font-semibold leading-relaxed flex items-start gap-1.5">
+                            <span className="font-bold select-none text-gray-800">•</span>
+                            <span>{linea}</span>
                           </p>
-                        ))
-                      ) : (
-                        !eq.texto_diagnostico && (
-                          <p className="text-gray-800">
-                            - El equipo presenta desgaste por uso operativo, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.
-                          </p>
-                        )
-                      )}
-
-                      {/* Viñeta antena */}
-                      {eq.antenaEstado === 'REEMPLAZO' && (
-                        <p className="text-gray-800">
-                          - La antena presenta desgaste por uso, pero está funcionando con normalidad, se recomienda su reemplazo, se cotizará en forma opcional.
-                        </p>
-                      )}
-
-                      {/* Viñeta batería */}
-                      {(eq.bateriaEstado === 'REEMPLAZO' || (parseInt(eq.bateriaCarga, 10) > 0 && parseInt(eq.bateriaCarga, 10) < 70)) && (
-                        <p className="text-gray-800">
-                          - La batería {eq.bateriaModelo || 'del radio'}, tiene una capacidad de carga del {eq.bateriaCarga || 45}% se debe reemplazar, se cotizará en accesorios.
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
             {/* D. Sección 3: Conclusiones / Recomendaciones (Condicional) */}

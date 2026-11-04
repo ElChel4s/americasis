@@ -324,3 +324,57 @@ export function getDescripcionEfectiva(equipo = {}) {
   return generarDescripcionServicio(equipo);
 }
 
+
+/**
+ * Retorna las líneas limpias de diagnóstico técnico para un equipo en la sección 2 del informe.
+ * Aplica prioridad exclusiva: si el usuario/técnico redactó o editó texto_diagnostico,
+ * se utiliza ÚNICAMENTE dicho texto (limpiando guiones iniciales redundantes para evitar "• - -").
+ * Si no hay texto manual, se genera el texto a partir de las fallas registradas de la placa.
+ * @param {Object} equipo
+ * @returns {string[]}
+ */
+export function obtenerLineasDiagnosticoEquipo(equipo = {}) {
+  if (!equipo) return [];
+
+  // 1. Si el usuario redactó/editó en Fase 2 o 3, usar ÚNICAMENTE su texto:
+  const textoManual = String(equipo.texto_diagnostico || '').trim();
+  if (textoManual.length > 0) {
+    const rawLines = textoManual.split('\n');
+    const cleanedLines = rawLines
+      .map(line => line.trim().replace(/^[-–—•*\s]+/, '').trim())
+      .filter(line => line.length > 0);
+
+    if (cleanedLines.length > 0) {
+      return cleanedLines;
+    }
+  }
+
+  // 2. Fallback: Si no hay texto manual, usar las fallas autogeneradas de la placa:
+  const fallas = (equipo.fallas_placa || equipo.equipo_fallas || equipo.fallas || [])
+    .map(f => {
+      if (typeof f === 'string') return f.trim();
+      return f.label || f.descripcion || f.nombre || '';
+    })
+    .filter(Boolean);
+
+  if (fallas.length > 0) {
+    return [
+      `El equipo presenta falla en ${fallas.join(', ')}, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.`
+    ];
+  }
+
+  // 3. Fallback base:
+  return [
+    'Revisión técnica general, pruebas de transmisión/recepción operativas y mantenimiento preventivo.'
+  ];
+}
+
+/**
+ * Retorna el texto unificado de diagnóstico técnico para un equipo (sección 2).
+ * @param {Object} equipo
+ * @returns {string}
+ */
+export function obtenerTextoDiagnosticoEquipo(equipo = {}) {
+  const lineas = obtenerLineasDiagnosticoEquipo(equipo);
+  return lineas.join('\n');
+}
