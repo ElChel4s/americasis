@@ -22,7 +22,12 @@ import {
   Eye,
   Smartphone,
   ZoomIn,
-  ZoomOut
+  ZoomOut,
+  Zap,
+  Battery,
+  BatteryCharging,
+  BatteryWarning,
+  AlertTriangle
 } from 'lucide-react';
 import QrMobileModal from '@/components/modals/QrMobileModal';
 import ImageCropModal from '@/components/modals/ImageCropModal';
