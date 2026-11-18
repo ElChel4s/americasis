@@ -110,7 +110,7 @@ graph TD
   - Al hacer clic en cualquier foto, abre el **Lightbox Modal** en alta resolución con zoom interactivo (`1x`, `1.5x`, `2x`), botón de descarga y cierre con tecla `Esc`.
   - Permiso exclusivo de visualización (sin botón de eliminación).
   - Si no hay fotos, muestra: *"Sin fotos de ingreso registradas en mostrador"*.
-- **Evaluación de Accesorios y Batería:**z
+- **Evaluación de Accesorios y Batería:**
   - Botones de condición: `Operativa`, `Dañado/Roto`, `Se sugiere reemplazo`.
   - Medidor de batería con selector rápido (`100%`, `80%`, `50%`, `20%`, `0%` o porcentaje manual) con alertas visuales por color.
 - **Chequeo de Fallas de Placa Electrónica:**

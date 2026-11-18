@@ -518,7 +518,7 @@ export default function Step2Diagnosis({
   };
 
   // Generador automático de texto técnico basado en fallas y repuestos (Fase 2 / Fase 4)
-  const sintetizarTextoTecnico = (fallas, repuestosList) => {
+  const sintetizarTextoTecnico = (fallas, repuestosList, pctBateriaOverride) => {
     const lineas = [];
 
     if (!fallas || fallas.length === 0) {
@@ -531,17 +531,43 @@ export default function Step2Diagnosis({
       lineas.push(`- El equipo presenta fallas en: ${lista}, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.`);
     }
 
-    // Viñetas adicionales de antena, batería u otros repuestos sugeridos
+    // Viñetas adicionales de antena, batería u otros repuestos evaluados
     (repuestosList || []).forEach(r => {
-      const nombreLow = (r.nombre || '').toLowerCase();
-      if (r.se_reemplaza) {
-        if (nombreLow.includes('anten')) {
+      const nombre = (r.nombre || '').trim();
+      const nombreLow = nombre.toLowerCase();
+      const condicion = r.estado_condicion;
+
+      if (nombreLow.includes('anten')) {
+        // Regla explícita de Antena: Operativa, Dañado/Roto, o Se sugiere reemplazo
+        if (condicion === 'Operativa') {
+          lineas.push('- Antena funciona con normalidad.');
+        } else if (condicion === 'Dañado/Roto') {
+          if (r.se_reemplaza) {
+            lineas.push('- Antena dañada/rota, se sugiere reemplazo.');
+          } else {
+            lineas.push('- Antena dañada/rota.');
+          }
+        } else if (r.se_reemplaza || condicion === 'Se sugiere reemplazo') {
           lineas.push('- La antena presenta desgaste por uso, pero está funcionando con normalidad, se recomienda su reemplazo, se cotizará en forma opcional.');
-        } else if (nombreLow.includes('bater')) {
-          const cap = r.porcentaje_carga !== null && r.porcentaje_carga !== undefined ? r.porcentaje_carga : (bateriaPorcentaje ?? (parseInt(equipo.bateriaCarga, 10) || 45));
+        }
+      } else if (nombreLow.includes('bater')) {
+        const cap = pctBateriaOverride !== undefined && pctBateriaOverride !== null
+          ? pctBateriaOverride
+          : (r.porcentaje_carga !== null && r.porcentaje_carga !== undefined 
+              ? r.porcentaje_carga 
+              : (bateriaPorcentaje ?? (parseInt(equipo.bateriaCarga, 10) || 45)));
+
+        if (r.se_reemplaza || condicion === 'Se sugiere reemplazo') {
           lineas.push(`- La batería tiene una capacidad de carga del ${cap}% se debe reemplazar, se cotizará en accesorios.`);
-        } else {
-          lineas.push(`- Se sugiere reemplazo de ${r.nombre} (${r.falla_detalle || r.estado_condicion || 'Desgaste operativo'}).`);
+        } else if (condicion === 'Dañado/Roto') {
+          lineas.push(`- La batería se encuentra dañada/rota (capacidad ${cap}%).`);
+        }
+      } else {
+        // Otros accesorios estándar o manuales (ej: Cover PTT, Clip, Carcasa, Micrófono...)
+        if (r.se_reemplaza || condicion === 'Se sugiere reemplazo') {
+          lineas.push(`- Se sugiere reemplazo de ${nombre || 'accesorio'} (${r.falla_detalle || r.estado_condicion || 'Desgaste operativo'}).`);
+        } else if (condicion === 'Dañado/Roto') {
+          lineas.push(`- El equipo presenta ${nombre || 'accesorio'} dañado/roto.`);
         }
       }
     });
@@ -580,7 +606,11 @@ export default function Step2Diagnosis({
       item.se_reemplaza = false;
     } else {
       item.estado_condicion = condicion;
-      item.se_reemplaza = (condicion === 'Se sugiere reemplazo');
+      if (condicion === 'Se sugiere reemplazo') {
+        item.se_reemplaza = true;
+      } else if (condicion === 'Operativa') {
+        item.se_reemplaza = false;
+      }
     }
     setRepuestos(copia);
 
@@ -593,29 +623,38 @@ export default function Step2Diagnosis({
     const copia = [...repuestos];
     copia[index] = { ...copia[index], [field]: value };
     setRepuestos(copia);
+
+    if (field === 'nombre' || field === 'porcentaje_carga' || field === 'falla_detalle' || field === 'se_reemplaza' || field === 'estado_condicion') {
+      const nuevoTexto = sintetizarTextoTecnico(fallasSeleccionadas, copia);
+      setTextoDiagnostico(nuevoTexto);
+    }
   };
 
   const agregarAccesorioManual = () => {
-    setRepuestos([
-      ...repuestos,
-      {
-        id: `manual-${Date.now()}`,
-        nombre: 'Nuevo Accesorio Manual',
-        estado_condicion: null,
-        se_reemplaza: false,
-        porcentaje_carga: null,
-        falla_detalle: '',
-        repuesto_sugerido: '',
-        cantidad: 1,
-        precio: 0,
-        es_manual: true,
-        recibido_mostrador: false
-      }
-    ]);
+    const nuevoItem = {
+      id: `manual-${Date.now()}`,
+      nombre: 'Nuevo Accesorio',
+      estado_condicion: 'Dañado/Roto',
+      se_reemplaza: false,
+      porcentaje_carga: null,
+      falla_detalle: '',
+      repuesto_sugerido: '',
+      cantidad: 1,
+      precio: 0,
+      es_manual: true,
+      recibido_mostrador: false
+    };
+    const updated = [...repuestos, nuevoItem];
+    setRepuestos(updated);
+    const nuevoTexto = sintetizarTextoTecnico(fallasSeleccionadas, updated);
+    setTextoDiagnostico(nuevoTexto);
   };
 
   const eliminarRepuesto = (index) => {
-    setRepuestos(repuestos.filter((_, i) => i !== index));
+    const filtered = repuestos.filter((_, i) => i !== index);
+    setRepuestos(filtered);
+    const nuevoTexto = sintetizarTextoTecnico(fallasSeleccionadas, filtered);
+    setTextoDiagnostico(nuevoTexto);
   };
 
   // Manejo de selección de fallas
@@ -664,10 +703,15 @@ export default function Step2Diagnosis({
       } catch (err) {}
     }
 
+    const updatedSeleccionadas = [...fallasSeleccionadas, { ...fallaObj, es_custom: true, reparado: false }];
     setFallasCatalogo(prev => [...prev, fallaObj]);
-    setFallasSeleccionadas(prev => [...prev, { ...fallaObj, es_custom: true, reparado: false }]);
+    setFallasSeleccionadas(updatedSeleccionadas);
     setNuevaFalla({ label: '', categoria: 'TX', descripcion: '', guardarEnCatalogo: true });
     setShowAddFaultModal(false);
+
+    // Auto-generar redacción técnica formal instantánea incluyendo la nueva falla
+    const nuevoTexto = sintetizarTextoTecnico(updatedSeleccionadas, repuestos);
+    setTextoDiagnostico(nuevoTexto);
   };
 
   // Cálculos para propagar al estado global
@@ -1218,6 +1262,26 @@ export default function Step2Diagnosis({
                   </div>
                 </div>
 
+                {/* Opción de Reemplazo si está Dañado/Roto */}
+                {item.estado_condicion === 'Dañado/Roto' && (
+                  <div className="pt-2 flex items-center justify-between border-t border-slate-100">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-gray-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(item.se_reemplaza)}
+                        onChange={(e) => handleRepuestoChange(idx, 'se_reemplaza', e.target.checked)}
+                        className="w-4 h-4 text-red-600 rounded border-slate-300 focus:ring-red-500 cursor-pointer"
+                      />
+                      <span>Sugerir reemplazo en presupuesto/cotización</span>
+                    </label>
+                    {item.se_reemplaza && (
+                      <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                        Cotización incluida
+                      </span>
+                    )}
+                  </div>
+                )}
+
                 {/* Sub-fila para Batería: Capacidad y Retención de Carga */}
                 {esBateria && (
                   <div className="pt-2.5 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-slideUp">
@@ -1630,8 +1694,17 @@ export default function Step2Diagnosis({
 
         {/* Atajos de Frases Rápidas de Telecomunicaciones */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-gray-400 font-bold flex items-center gap-1">
-            <Sparkles size={13} className="text-amber-500" /> Insertar plantilla rápida:
+          <button
+            type="button"
+            onClick={() => setTextoDiagnostico(sintetizarTextoTecnico(fallasSeleccionadas, repuestos))}
+            className="text-[11px] bg-red-50 border border-red-200 hover:bg-red-100 text-[#E30613] font-bold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+            title="Regenerar automáticamente la redacción técnica según fallas y accesorios marcados"
+          >
+            <Sparkles size={13} className="text-[#E30613]" /> Regenerar redacción técnica
+          </button>
+
+          <span className="text-xs text-gray-400 font-bold flex items-center gap-1 ml-1">
+            Insertar frase rápida:
           </span>
           {[
             'Potencia RF baja (< 1 Watt en TX)',

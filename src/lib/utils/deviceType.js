@@ -167,6 +167,17 @@ export function formatEquipmentReceptionText(equipo = {}) {
   const serie = (equipo.serie || equipo.numero_serie || 'S/N').trim();
   const acc = equipo.accesoriosRecepcion || {};
 
+  const fallaRaw = String(
+    equipo.falla_declarada_cliente || 
+    equipo.falla_reportada || 
+    equipo.fallaDeclaradaCliente || 
+    ''
+  ).trim();
+  const fallaLimpia = fallaRaw.replace(/\.+$/, '').trim();
+  const fallaTxt = (fallaLimpia && !['ninguna', 'ninguno', 's/f', 'sin falla'].includes(fallaLimpia.toLowerCase()))
+    ? ` (Falla reportada: ${fallaLimpia}).`
+    : '';
+
   // Caso A: Radio Móvil / Base
   if (tipo === 'Radio Móvil / Base') {
     const micPresencia = acc['Micrófono de Palma'] || acc['Microfono de Palma'] || 'CON';
@@ -197,7 +208,7 @@ export function formatEquipmentReceptionText(equipo = {}) {
 
     if (otros) accesorioDetalle += otros;
 
-    return `${prefix} ${marca} ${modelo} ${banda} – Serie: ${serie} - ${accesorioDetalle}.`;
+    return `${prefix} ${marca} ${modelo} ${banda} – Serie: ${serie} - ${accesorioDetalle}.${fallaTxt ? `${fallaTxt}` : ''}`;
   }
 
   // Caso B: Repetidora / Estación Base
@@ -216,7 +227,7 @@ export function formatEquipmentReceptionText(equipo = {}) {
       ? `Con ${partes.join(', ')}` 
       : 'Sin cables ni módulos externos';
 
-    return `${prefix} ${marca} ${modelo} ${banda} – Serie: ${serie} - ${accDetalle}${otros}.`;
+    return `${prefix} ${marca} ${modelo} ${banda} – Serie: ${serie} - ${accDetalle}${otros}.${fallaTxt ? `${fallaTxt}` : ''}`;
   }
 
   // Caso C: Handy / Portátil
@@ -243,7 +254,7 @@ export function formatEquipmentReceptionText(equipo = {}) {
     accDetalle = 'Sin accesorios (solo cuerpo de radio)';
   }
 
-  return `${prefix} ${marca} ${modelo} ${banda} – Serie: ${serie} - ${accDetalle}${otros}.`;
+  return `${prefix} ${marca} ${modelo} ${banda} – Serie: ${serie} - ${accDetalle}${otros}.${fallaTxt ? `${fallaTxt}` : ''}`;
 }
 
 export const DEFAULT_GENERIC_SERVICE_DESCRIPTION = '(Servicio técnico, revisión general, limpieza, ajuste-calibración de parámetros y mantenimiento general)';
@@ -267,9 +278,9 @@ export function generarDescripcionServicio(equipo = {}) {
     })
     .filter(Boolean);
 
-  // 2. Extraer repuestos con reemplazo sugerido
+  // 2. Extraer repuestos con reemplazo sugerido o marcados como Dañado/Roto
   const repuestos = (equipo.repuestos_cotizados || equipo.equipo_repuestos_cotizados || equipo.repuestos || [])
-    .filter(r => r.se_reemplaza)
+    .filter(r => r.se_reemplaza || r.estado_condicion === 'Dañado/Roto' || r.estado_condicion === 'Se sugiere reemplazo')
     .map(r => (typeof r === 'string' ? r : r.nombre || ''))
     .filter(Boolean);
 
@@ -329,7 +340,7 @@ export function getDescripcionEfectiva(equipo = {}) {
  * Retorna las líneas limpias de diagnóstico técnico para un equipo en la sección 2 del informe.
  * Aplica prioridad exclusiva: si el usuario/técnico redactó o editó texto_diagnostico,
  * se utiliza ÚNICAMENTE dicho texto (limpiando guiones iniciales redundantes para evitar "• - -").
- * Si no hay texto manual, se genera el texto a partir de las fallas registradas de la placa.
+ * Si no hay texto manual, se genera el texto a partir de las fallas registradas de la placa y repuestos dañados.
  * @param {Object} equipo
  * @returns {string[]}
  */
@@ -349,7 +360,7 @@ export function obtenerLineasDiagnosticoEquipo(equipo = {}) {
     }
   }
 
-  // 2. Fallback: Si no hay texto manual, usar las fallas autogeneradas de la placa:
+  // 2. Fallback: Si no hay texto manual, usar las fallas autogeneradas de la placa y repuestos dañados:
   const fallas = (equipo.fallas_placa || equipo.equipo_fallas || equipo.fallas || [])
     .map(f => {
       if (typeof f === 'string') return f.trim();
@@ -357,10 +368,25 @@ export function obtenerLineasDiagnosticoEquipo(equipo = {}) {
     })
     .filter(Boolean);
 
+  const repuestosDanados = (equipo.repuestos_cotizados || equipo.equipo_repuestos_cotizados || equipo.repuestos || [])
+    .filter(r => r.se_reemplaza || r.estado_condicion === 'Dañado/Roto' || r.estado_condicion === 'Se sugiere reemplazo')
+    .map(r => (typeof r === 'string' ? r : r.nombre || ''))
+    .filter(Boolean);
+
+  const lineasFallback = [];
   if (fallas.length > 0) {
-    return [
+    lineasFallback.push(
       `El equipo presenta falla en ${fallas.join(', ')}, requiere ajuste-calibración de parámetros, limpieza y mantenimiento general.`
-    ];
+    );
+  }
+  if (repuestosDanados.length > 0) {
+    lineasFallback.push(
+      `Presenta anomalía o daño en accesorios/repuestos: ${repuestosDanados.join(', ')}.`
+    );
+  }
+
+  if (lineasFallback.length > 0) {
+    return lineasFallback;
   }
 
   // 3. Fallback base:
